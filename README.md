@@ -7,8 +7,9 @@ Premade-Parties, Bilanz gegen/mit dir. Nach dem Match: Ergebnis, Tagesbilanz, SR
 ## Installieren (Spieler)
 1. `GOALS-Scout-Setup-x.y.z.exe` ausführen (von Maxim bekommen oder aus den Releases).
    Windows-SmartScreen warnt evtl. („unbekannter Herausgeber“) → **Weitere Informationen → Trotzdem ausführen**.
-2. Fertig. Das Overlay startet, sitzt rechts am Bildschirmrand und aktualisiert sich ab jetzt **automatisch**
-   (nie während eines Matches).
+2. Fertig. Die App startet ab jetzt unsichtbar mit Windows. **Sobald du GOALS startest, erscheint das Overlay**
+   rechts am Bildschirmrand, wenn du GOALS schließt, verschwindet es wieder.
+   Updates kommen **automatisch** (nie während eines Matches).
 
 **Steuerung:** `Strg+Umschalt+O` ein/aus · `Strg+Umschalt+Q` beenden · grünes „G“ im Tray (Rechtsklick):
 Version, Updates suchen, „Mit Windows starten“.

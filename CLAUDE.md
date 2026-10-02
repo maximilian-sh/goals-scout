@@ -18,7 +18,7 @@ overlay/main.js (Electron): transparentes Fenster, startet server.js im selben P
 | `server.js` | Liest `Game.log` (Tail, 1 s), parst Lobbys, holt Spielerdaten von playgoals.com, berechnet Stats, SSE an `/events`, JSON an `/api/state`, statische Dateien aus `public/` |
 | `public/overlay.html` | Das Overlay (eine Datei, Vanilla JS/CSS). Phasen: Lobby → Match läuft → Nach dem Match; eigene 1v1-Ansicht |
 | `public/index.html` | Älteres großes Browser-Dashboard (`start.bat`), weniger gepflegt |
-| `overlay/main.js` | Electron-Hauptprozess: Fenster rechts am Bildschirmrand, klick-durchlässig, immer oben, Tray, Hotkeys, Auto-Updater |
+| `overlay/main.js` | Electron-Hauptprozess: Fenster rechts am Bildschirmrand, klick-durchlässig, immer oben, Tray, Hotkeys, Auto-Updater. Läuft unsichtbar im Tray (Autostart mit Windows) und zeigt das Overlay nur, solange `Goals.exe` läuft (`checkGame()`, alle 3 s) |
 | `scripts/release.js` | Version bumpen, Installer bauen, als Release ins private GitHub-Repo laden |
 | `build/` | App-Icons für den Installer |
 
@@ -71,7 +71,7 @@ npm run server           # nur Server; Dashboard unter http://localhost:7777, Ov
 - Umgebungsvariablen: `PORT`, `GOALS_LOG`, `GOALS_NAME`, `GOALS_DATA_DIR`, `OVERLAY_WIDTH`, `OVERLAY_TOP`.
 
 ## Release (Auto-Update)
-- `npm run release` (oder `npm run release minor`) → bumpt Version, baut NSIS-Installer, lädt ihn als GitHub-Release in **maximilian-sh/goals-scout** (privat), pusht Tag.
+- `npm run release` (oder `npm run release minor`) → bumpt Version, pusht Commit + Tag, baut NSIS-Installer (`--publish never`) und legt mit `gh release create` ein Release in **maximilian-sh/goals-scout** (privat) an. (electron-builders eigener Upload erzeugte doppelte Releases → nicht verwenden.)
 - Installierte Apps prüfen beim Start und alle 10 min, laden im Hintergrund und installieren **nie während eines laufenden Matches** (`installWhenIdle`).
 - Voraussetzungen auf dem Release-PC: `gh auth login` (Upload) und Datei `%USERPROFILE%\.goals-scout-token` mit einem **read-only** Fine-grained-Token (Contents: Read) für das Repo – wird als `overlay/update-token.json` in die App gepackt (gitignored). Ohne Token gibt es keine Updates.
 - Release nur von sauberem Working Tree (Skript bricht sonst ab).

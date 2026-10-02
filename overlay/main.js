@@ -6,6 +6,7 @@ const net = require('net');
 const path = require('path');
 const fs = require('fs');
 const { autoUpdater } = require('electron-updater');
+const { execFile } = require('child_process');
 
 const PORT = Number(process.env.PORT) || 7777;
 const WIDTH = Number(process.env.OVERLAY_WIDTH) || 420; // Breite in px
@@ -49,14 +50,31 @@ function createWindow() {
   win.setIgnoreMouseEvents(true);           // Klicks gehen ans Spiel
   win.setVisibleOnAllWorkspaces(true);
   win.loadURL(`http://localhost:${PORT}/overlay.html?overlay=1`);
-  win.once('ready-to-show', () => win.showInactive());
+  win.once('ready-to-show', () => { if (gameRunning && !userHidden) win.showInactive(); });
   // Server neu gestartet o. Ä. → nach kurzer Zeit erneut laden
   win.webContents.on('did-fail-load', () => setTimeout(() => win && win.loadURL(`http://localhost:${PORT}/overlay.html?overlay=1`), 1500));
 }
 
+// Manuell ausgeblendet (Hotkey/Tray) bleibt aus, bis GOALS neu gestartet wird.
+let userHidden = false;
 function toggle() {
   if (!win) return;
-  win.isVisible() ? win.hide() : win.showInactive();
+  if (win.isVisible()) { userHidden = true; win.hide(); } else { userHidden = false; win.showInactive(); }
+}
+
+// ---------- An GOALS koppeln ----------
+// Overlay erscheint, sobald Goals.exe läuft, und verschwindet, wenn das Spiel beendet wird.
+// Die App selbst bleibt unsichtbar im Tray (startet mit Windows), damit sie das nächste Spiel mitbekommt.
+let gameRunning = false;
+function checkGame() {
+  execFile('tasklist', ['/FI', 'IMAGENAME eq Goals.exe', '/FO', 'CSV', '/NH'], { windowsHide: true }, (err, stdout) => {
+    const running = !err && /"Goals\.exe"/i.test(stdout);
+    if (running === gameRunning) return;
+    gameRunning = running;
+    if (running) { userHidden = false; if (win) win.showInactive(); }
+    else { if (win) win.hide(); installWhenIdle(); }
+    updateTray();
+  });
 }
 
 function createTray() {
@@ -65,11 +83,14 @@ function createTray() {
   updateTray();
 }
 
+let trayStatus = '';
 function updateTray(status) {
   if (!tray) return;
+  if (status !== undefined) trayStatus = status; else status = trayStatus;
   tray.setToolTip(`GOALS Overlay ${app.getVersion()}${status ? ' – ' + status : ''}`);
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: `GOALS Overlay ${app.getVersion()}`, enabled: false },
+    { label: gameRunning ? 'GOALS läuft' : 'Wartet auf GOALS …', enabled: false },
     ...(status ? [{ label: status, enabled: false }] : []),
     { type: 'separator' },
     { label: 'Ein-/Ausblenden (Strg+Umschalt+O)', click: toggle },
@@ -91,6 +112,8 @@ function setupUpdater() {
   if (!token) return updateTray('Updates nicht eingerichtet');
   autoUpdater.setFeedURL({ provider: 'github', owner: 'maximilian-sh', repo: 'goals-scout', private: true, token });
   autoUpdater.autoDownload = true;
+  autoUpdater.disableDifferentialDownload = true; // Blockmaps aus privaten Releases sind nicht lesbar
+  autoUpdater.disableWebInstaller = true;
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.on('update-available', i => updateTray(`Lade Update ${i.version}…`));
   autoUpdater.on('update-not-available', () => updateTray('Aktuell'));
@@ -105,10 +128,12 @@ function checkForUpdates() { if (app.isPackaged) autoUpdater.checkForUpdates().c
 // Nie mitten im Match neu starten – nur in Menü/Lobby/nach dem Spiel.
 async function installWhenIdle() {
   if (!pendingUpdate) return;
-  try {
-    const st = await (await fetch(`http://localhost:${PORT}/api/state`)).json();
-    if (st.session && st.session.state === 'GAME_SESSION_STATE_READY_TO_JOIN_GAME_SERVER') return;
-  } catch {}
+  if (gameRunning) {
+    try {
+      const st = await (await fetch(`http://localhost:${PORT}/api/state`)).json();
+      if (st.session && st.session.state === 'GAME_SESSION_STATE_READY_TO_JOIN_GAME_SERVER') return;
+    } catch {}
+  }
   pendingUpdate = false;
   autoUpdater.quitAndInstall(true, true); // still installieren und danach wieder starten
 }
@@ -123,9 +148,19 @@ app.whenReady().then(async () => {
     if (app.isPackaged) process.env.GOALS_DATA_DIR = path.join(app.getPath('userData'), 'data');
     require(path.join(__dirname, '..', 'server.js'));
   }
+  // Installierte App startet standardmäßig mit Windows (abschaltbar im Tray-Menü)
+  if (app.isPackaged) {
+    const flag = path.join(app.getPath('userData'), 'autostart-initialized');
+    if (!fs.existsSync(flag)) {
+      app.setLoginItemSettings({ openAtLogin: true });
+      fs.writeFileSync(flag, new Date().toISOString());
+    }
+  }
   createWindow();
   createTray();
   setupUpdater();
+  checkGame();
+  setInterval(checkGame, 3000);
   globalShortcut.register('CommandOrControl+Shift+O', toggle);
   globalShortcut.register('CommandOrControl+Shift+Q', () => app.quit());
   screen.on('display-metrics-changed', () => win && win.setBounds(placeWindow()));

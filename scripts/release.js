@@ -33,8 +33,9 @@ const version = require(path.join(root, 'package.json')).version;
 
 // Erst Commit + Tag pushen, damit das GitHub-Release auf den richtigen Commit zeigt
 run('git push --follow-tags');
-// Zum Hochladen dein normales gh-Login verwenden (bleibt auf deinem PC).
-// Upload bricht manchmal ab – dann einfach nochmal (bereits hochgeladene Dateien werden überschrieben).
-const publish = () => run('npx electron-builder --win --publish always', { GH_TOKEN: out('gh auth token') });
-try { publish(); } catch { console.log('\nUpload fehlgeschlagen – zweiter Versuch …\n'); publish(); }
+// Bauen ohne electron-builders eigenen Upload (der legt gelegentlich doppelte Releases an),
+// dann mit der GitHub CLI genau ein Release mit allen Dateien erstellen.
+run('npx electron-builder --win --publish never');
+const exe = `dist/GOALS-Scout-Setup-${version}.exe`;
+run(`gh release create v${version} "${exe}" "${exe}.blockmap" dist/latest.yml --title "v${version}" --generate-notes`);
 console.log(`\n✔ Version ${version} veröffentlicht – Overlays aktualisieren sich in den nächsten Minuten.`);
