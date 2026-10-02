@@ -135,7 +135,8 @@ let partial = '';
 function readLog(initial) {
   let stat;
   try { stat = fs.statSync(LOG_PATH); } catch { return false; }
-  if (stat.size < offset) { offset = 0; partial = ''; }
+  // Neues Log = Spiel neu gestartet → alte Lobby verwerfen
+  if (stat.size < offset) { offset = 0; partial = ''; session = null; if (!initial) broadcast(); }
   if (stat.size === offset) return false;
   const fd = fs.openSync(LOG_PATH, 'r');
   const buf = Buffer.alloc(stat.size - offset);
