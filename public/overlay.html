@@ -1,0 +1,493 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GOALS Overlay</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0a0c10;
+    --surface: #12161c;
+    --surface-2: #181d25;
+    --line: #1f2630;
+    --text: #eef2f6;
+    --text-2: #a3adba;
+    --text-3: #6b7685;
+    --good: #3ddc97;
+    --bad: #ff6b6b;
+    --mine: #3ddc97;
+    --opp: #ff6b6b;
+    --party-A: #a78bfa; --party-B: #fbbf24; --party-C: #22d3ee; --party-D: #f472b6;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 13px/1.35 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+    padding: 10px 10px 16px;
+  }
+  ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+  .good { color: var(--good); } .bad { color: var(--bad); } .dim { color: var(--text-3); font-weight: 400; }
+  .card { background: var(--surface); border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; }
+  .lbl { color: var(--text-3); font-size: 10.5px; text-transform: uppercase; letter-spacing: .8px; }
+
+  /* ---- Kopfzeile ---- */
+  .head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; color: var(--text-3); font-size: 11.5px; white-space: nowrap; overflow: hidden; }
+  #info { overflow: hidden; text-overflow: ellipsis; }
+  .head .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); flex: none; }
+  .head .dot.live { background: var(--good); box-shadow: 0 0 0 3px color-mix(in srgb, var(--good) 25%, transparent); }
+  .head .state { color: var(--text); font-weight: 600; font-size: 13px; }
+  .head .sp { flex: 1; }
+
+  /* ---- Matchup ---- */
+  .odds-top { display: flex; align-items: baseline; justify-content: space-between; }
+  .big { font-size: 26px; font-weight: 700; letter-spacing: -.5px; }
+  .odds-bar { display: flex; height: 6px; border-radius: 3px; overflow: hidden; margin: 8px 0 10px; background: var(--opp); }
+  .odds-bar i { background: var(--mine); }
+  .cmp { display: grid; grid-template-columns: 1fr auto 1fr; row-gap: 3px; font-size: 13px; }
+  .cmp .k { color: var(--text-3); font-size: 11.5px; text-align: center; padding: 0 8px; white-space: nowrap; }
+  .cmp .a { text-align: left; } .cmp .b { text-align: right; }
+  .cmp .win { color: var(--text); font-weight: 650; } .cmp .lose { color: var(--text-3); }
+
+  /* ---- Team-Tabellen ---- */
+  .team { margin-bottom: 14px; }
+  .team-h { display: flex; align-items: baseline; gap: 8px; margin: 0 0 6px 2px; }
+  .team-h b { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
+  .team-h.mine b { color: var(--mine); } .team-h.opp b { color: var(--opp); }
+  .team-h span { color: var(--text-3); font-size: 12px; }
+
+  .grid { display: grid; grid-template-columns: minmax(0, 1fr) 42px 44px 42px 50px; align-items: center; column-gap: 7px; }
+  @media (min-width: 640px) { .grid { grid-template-columns: minmax(0, 1fr) 56px 56px 60px 66px 48px 52px; } }
+  .score { font-size: 15px; font-weight: 750; }
+  .s-elite { color: #f5c542; } .s-high { color: var(--good); } .s-mid { color: var(--text); } .s-low { color: #f0a050; } .s-bad { color: var(--bad); }
+  .s-unsure { opacity: .55; }
+  .parts { display: grid; grid-template-columns: auto 1fr 34px; gap: 3px 8px; align-items: center; font-size: 11.5px; margin-bottom: 10px; }
+  .parts span { color: var(--text-3); } .parts em { font-style: normal; text-align: right; color: var(--text-2); }
+  .parts .bar { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; }
+  .parts .bar i { display: block; height: 100%; background: var(--text-2); }
+  .wide { display: none; } @media (min-width: 640px) { .wide { display: block; } }
+  .cols { color: var(--text-3); font-size: 10px; text-transform: uppercase; letter-spacing: .6px; padding: 0 9px 3px 10px; }
+  .cols > div:not(:first-child), .row .n { text-align: right; }
+
+  .row { background: var(--surface); border-radius: 7px; padding: 7px 9px; margin-bottom: 4px; border-left: 3px solid transparent; }
+  .row.me { background: color-mix(in srgb, var(--mine) 9%, var(--surface)); }
+  .row[data-party="A"] { border-left-color: var(--party-A); } .row[data-party="B"] { border-left-color: var(--party-B); }
+  .row[data-party="C"] { border-left-color: var(--party-C); } .row[data-party="D"] { border-left-color: var(--party-D); }
+
+  .who { min-width: 0; }
+  .who .name { font-weight: 650; font-size: 14px; white-space: nowrap; overflow: hidden; display: flex; align-items: center; gap: 7px; }
+  .who .name .t { overflow: hidden; text-overflow: ellipsis; }
+  .who .sub { color: var(--text-3); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+  .pc { flex: none; width: 10px; height: 10px; border-radius: 50%; box-shadow: 0 0 0 2px rgba(0,0,0,.35); }
+
+  .n { font-size: 14px; font-weight: 600; }
+  .n small { display: block; font-size: 11px; font-weight: 400; color: var(--text-3); margin-top: 1px; }
+
+  .form { display: flex; gap: 2px; justify-content: flex-end; }
+  .form i { width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); }
+  .form i.W { background: var(--good); } .form i.L { background: var(--bad); } .form i.D { background: #e5c07b; }
+
+  /* Kompakte Zeilen (eigenes Team während des Matches) */
+  .mini { display: flex; align-items: center; gap: 7px; padding: 4px 9px; border-left: 3px solid transparent; }
+  .mini[data-party="A"] { border-left-color: var(--party-A); } .mini[data-party="B"] { border-left-color: var(--party-B); }
+  .mini[data-party="C"] { border-left-color: var(--party-C); } .mini[data-party="D"] { border-left-color: var(--party-D); }
+  .mini .t { flex: 1; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mini .t.me { color: var(--mine); }
+  .mini .v { color: var(--text-2); width: 44px; text-align: right; }
+
+  /* ---- Details (aufgeklappt) ---- */
+  .detail { grid-column: 1 / -1; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); display: none; }
+  .row.open .detail { display: block; }
+  .facts { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px 12px; margin-bottom: 10px; }
+  .fact small { display: block; color: var(--text-3); font-size: 10.5px; text-transform: uppercase; letter-spacing: .6px; }
+  .fact b { font-size: 14px; font-weight: 600; }
+  .attrs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px 12px; }
+  .attr small { display: flex; justify-content: space-between; color: var(--text-3); font-size: 11px; }
+  .attr small b { color: var(--text); font-weight: 600; }
+  .attr .bar { height: 4px; background: var(--line); border-radius: 2px; margin-top: 3px; overflow: hidden; }
+  .attr .bar i { display: block; height: 100%; background: var(--text-2); }
+  .attr .bar i.hi { background: var(--good); }
+  .note { color: var(--text-2); font-size: 12.5px; margin-top: 8px; }
+
+  .empty { background: var(--surface); border-radius: 10px; padding: 32px 20px; text-align: center; color: var(--text-3); margin-bottom: 12px; }
+
+  /* ---- Nach dem Match ---- */
+  .result { text-align: center; padding: 16px 12px; }
+  .result .big { font-size: 34px; }
+  .result .score { font-size: 22px; font-weight: 700; color: var(--text-2); margin-top: 2px; }
+  .stats3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; text-align: center; }
+  .stats3 b { display: block; font-size: 18px; font-weight: 700; }
+  .list .li { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+  .list .li:last-child { border-bottom: 0; }
+  .toggle { display: block; width: 100%; background: var(--surface); color: var(--text-2); border: 0; border-radius: 8px;
+    padding: 8px; font: inherit; cursor: pointer; margin-bottom: 12px; }
+  .toggle:hover { background: var(--surface-2); color: var(--text); }
+
+  /* ---- SR-Verlauf ---- */
+  .hist .top { display: flex; justify-content: space-between; color: var(--text-3); font-size: 12px; }
+  .hist .top b { color: var(--text); font-size: 14px; }
+  .hist svg { width: 100%; height: 56px; display: block; margin-top: 6px; }
+
+  .legend { color: var(--text-3); font-size: 11px; margin-top: 4px; line-height: 1.6; }
+
+  /* ---- Transparenter Overlay-Modus (Electron) ---- */
+  body.ov { background: transparent; padding: 0; overflow: hidden; }
+  body.ov ::-webkit-scrollbar { display: none; }
+  body.ov .card, body.ov .row, body.ov .empty, body.ov .head {
+    background: rgba(10, 13, 18, .80); border: 1px solid rgba(255, 255, 255, .06);
+  }
+  body.ov .row { border-left-width: 3px; }
+  body.ov .row.me { background: rgba(20, 52, 40, .82); }
+  body.ov .head { border-radius: 10px; padding: 7px 10px; }
+  body.ov .team-h, body.ov .cols { text-shadow: 0 1px 3px #000, 0 0 6px #000; }
+  body.ov .cols { color: #9aa5b3; }
+</style>
+</head>
+<body>
+<div class="head">
+  <span id="dot" class="dot"></span>
+  <span id="state" class="state">Verbinde…</span>
+  <span id="info"></span>
+  <span class="sp"></span>
+  <span id="me"></span>
+</div>
+<div id="main"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+if (new URLSearchParams(location.search).has('overlay')) document.body.classList.add('ov');
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const ROLE = { GK: 'TW', CB: 'IV', FB: 'AV', WB: 'AV', DM: 'DM', CM: 'ZM', AM: 'OM', WM: 'LM/RM', WF: 'Flügel', CF: 'HS', ST: 'ST' };
+
+// Spielerfarben aus den Spieldateien (MPC_5v5_PlayerIndicatorColors, Player 1–5, linear RGB).
+const LINEAR = [[0.0273, 0.5089, 0.2195], [0.0545, 0.2582, 0.624], [0.3095, 0.0513, 0.7231], [1, 0.0452, 0], [1, 0.7835, 0]];
+const toSrgb = c => Math.round(255 * (c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055));
+const PLAYER_COLORS = LINEAR.map(rgb => `rgb(${rgb.map(toSrgb).join(',')})`);
+
+const avg = a => { const v = a.filter(x => x != null && !Number.isNaN(x)); return v.length ? v.reduce((x, y) => x + y, 0) / v.length : null; };
+const pct = v => v == null ? '–' : Math.round(v * 100) + '%';
+const fix = (v, d = 1) => v == null ? '–' : v.toFixed(d);
+const sign = v => v == null || Math.round(v) === 0 ? '' : (v > 0 ? '+' : '−') + Math.abs(Math.round(v));
+const ago = s => { if (!s) return '–'; const d = Date.now() / 1000 - s; return d < 3600 ? Math.round(d / 60) + ' min' : d < 86400 ? Math.round(d / 3600) + ' h' : Math.round(d / 86400) + ' T'; };
+const wrCls = v => v == null ? 'dim' : v >= .55 ? 'good' : v <= .45 ? 'bad' : '';
+
+
+// ---------- Tracker Score ----------
+// 0–1000 aus der bisherigen Leistung, ähnlich wie bei Valorant Tracker. Kleine Stichproben werden
+// Richtung Durchschnitt gezogen, damit 3 Glücks-Siege keinen Top-Score ergeben.
+const clamp01 = x => Math.max(0, Math.min(1, x));
+const lin = (x, lo, hi) => clamp01((x - lo) / (hi - lo));
+function trackerScore(p, fmt = '5v5') {
+  const sc = p.scout && (fmt === '1v1' ? p.scout.one : p.scout);
+  if (!sc || !sc.games) return null;
+  const pr = p.scout.profile || {};
+  const gdRange = fmt === '1v1' ? 3 : 2; // im 1v1 sind die Tore individuell und streuen mehr
+  const g = sc.games;
+  const n10 = sc.form.length, w10 = [...sc.form].filter(r => r === 'W').length;
+  const wrS = (sc.wins + 5) / (g + 10);
+  const formS = (w10 + 2.5) / (n10 + 5);
+  const gdS = (sc.goalDiff * g) / (g + 5);
+  const mercyS = (sc.mercyWins - sc.mercyLosses) / (g + 5);
+  const parts = [
+    { label: 'Skill Rating', w: .25, n: p.skillRating != null ? lin(p.skillRating, 1350, 1750) : .5, val: p.skillRating ?? '–' },
+    { label: 'Winrate', w: .25, n: lin(wrS, .35, .65), val: pct(sc.winRate) },
+    { label: 'Tordifferenz', w: .15, n: lin(gdS, -gdRange, gdRange), val: (sc.goalDiff >= 0 ? '+' : '') + sc.goalDiff.toFixed(1) },
+    { label: 'xG / Match', w: .15, n: pr.xgPerMatch != null ? lin(pr.xgPerMatch, .2, 2.5) : .5, val: pr.xgPerMatch != null ? pr.xgPerMatch.toFixed(2) : '–' },
+    { label: 'Form (L10)', w: .10, n: lin(formS, .3, .7), val: pct(sc.winRate10) },
+    { label: 'Erfahrung', w: .05, n: pr.hours ? lin(Math.log10(pr.hours), Math.log10(5), Math.log10(800)) : .3, val: pr.hours != null ? Math.round(pr.hours) + ' h' : '–' },
+    { label: 'Dominanz', w: .05, n: lin(mercyS, -.1, .1), val: `${sc.mercyWins}/${sc.mercyLosses}` },
+  ];
+  const score = Math.round(1000 * parts.reduce((a, x) => a + x.w * x.n, 0));
+  return { score, parts, unsure: g < 10 };
+}
+function scoreHtml(p, fmt) {
+  const ts = trackerScore(p, fmt);
+  if (!ts) return '<span class="dim">…</span>';
+  const c = ts.score >= 750 ? 's-elite' : ts.score >= 600 ? 's-high' : ts.score >= 450 ? 's-mid' : ts.score >= 300 ? 's-low' : 's-bad';
+  return `<span class="score ${c} ${ts.unsure ? 's-unsure' : ''}" title="${ts.unsure ? 'Wenig Daten – unsicher' : 'Tracker Score'}">${ts.score}</span>`;
+}
+
+// ---------- Bausteine ----------
+function subline(p, isMe) {
+  const sc = p.scout, ch = p.character || {}, bits = [];
+  if (ch.ovr) bits.push(`<span style="color:var(--text-2)">${ch.ovr} ${ROLE[ch.role] || ch.role || ''}</span>`);
+  if (p.captain) bits.push('C');
+  if (sc && sc.streak) {
+    const n = +sc.streak.slice(1);
+    if (n >= 3) bits.push(sc.streak[0] === 'W' ? `<span class="good">${n}× S</span>` : `<span class="bad">${n}× N</span>`);
+  }
+  if (sc && sc.games < 10) bits.push('<span style="color:#e5c07b">neu</span>');
+  if (!isMe && sc && sc.withMe) bits.push(`mit dir ${sc.h2h.withW}–${sc.h2h.withL}`);
+  if (!isMe && sc && sc.againstMe) bits.push(`vs dich ${sc.h2h.vsL}–${sc.h2h.vsW}`);
+  return bits.join(' · ');
+}
+
+function row(p, ownId, color) {
+  const isMe = p.userId === ownId, sc = p.scout, pr = sc && sc.profile;
+  const loading = !sc && !p.scoutError;
+  const wr = sc && sc.games ? `<span class="${wrCls(sc.winRate)}">${pct(sc.winRate)}</span><small>${sc.games} Sp.</small>` : `<span class="dim">${loading ? '…' : '–'}</span>`;
+  const form = sc ? `<div class="form">${[...sc.form.slice(0, 5)].map(r => `<i class="${r}"></i>`).join('')}</div>` : '';
+  return `
+  <div class="row grid ${isMe ? 'me' : ''}" data-id="${p.userId}" ${p.party ? `data-party="${p.party.tag}"` : ''}>
+    <div class="who">
+      <div class="name">${color ? `<span class="pc" style="background:${color}"></span>` : ''}<span class="t">${esc(p.name)}</span></div>
+      <div class="sub">${subline(p, isMe)}</div>
+    </div>
+    <div class="n">${scoreHtml(p)}</div>
+    <div class="n">${p.skillRating ?? '–'}<small>${p.srDelta ? `<span class="${p.srDelta > 0 ? 'good' : 'bad'}">${sign(p.srDelta)}</span>` : 'Rank ' + (p.rank ?? '–')}</small></div>
+    <div class="n">${wr}</div>
+    <div class="n">${form}</div>
+    <div class="n wide">${pr && pr.xgPerMatch != null ? fix(pr.xgPerMatch, 2) : '<span class="dim">–</span>'}</div>
+    <div class="n wide">${pr && pr.hours != null ? Math.round(pr.hours) + '<span class="dim" style="font-size:12px"> h</span>' : '<span class="dim">–</span>'}</div>
+  </div>`;
+}
+
+function teamTable(list, ownId, cls, title, colors) {
+  const parties = new Set(list.filter(p => p.party).map(p => p.party.tag)).size;
+  const solo = list.filter(p => !p.party).length;
+  return `
+  <div class="team">
+    <div class="team-h ${cls}"><b>${title}</b><span>${parties ? `${parties} Party · ${solo} solo` : 'alle solo'}</span></div>
+    <div class="cols grid"><div>Spieler</div><div title="Tracker Score 0–1000">Score</div><div>SR</div><div>WR</div><div>Form</div><div class="wide">xG</div><div class="wide">Zeit</div></div>
+    ${list.map((p, i) => row(p, ownId, colors ? colors[i] : null)).join('')}
+  </div>`;
+}
+
+function teamMini(list, ownId, colors) {
+  return `
+  <div class="team">
+    <div class="team-h mine"><b>Dein Team</b></div>
+    <div class="card" style="padding:4px 0">
+      ${list.map((p, i) => `
+        <div class="mini" ${p.party ? `data-party="${p.party.tag}"` : ''}>
+          <span class="pc" style="background:${colors[i]}"></span>
+          <span class="t ${p.userId === ownId ? 'me' : ''}">${esc(p.name)}</span>
+          <span class="v">${p.character?.ovr ?? ''} <span class="dim">${ROLE[p.character?.role] || ''}</span></span>
+          <span class="v">${p.skillRating ?? '–'}</span>
+          <span class="v">${scoreHtml(p)}</span>
+        </div>`).join('')}
+    </div>
+  </div>`;
+}
+
+function teams(s, d) {
+  const meHome = s.home.includes(d.ownId) || !s.away.includes(d.ownId);
+  return {
+    mine: (meHome ? s.home : s.away).map(id => s.players[id]),
+    opp: (meHome ? s.away : s.home).map(id => s.players[id]),
+  };
+}
+
+function matchup(mine, opp, full) {
+  const T = l => ({
+    sr: avg(l.map(p => p.skillRating)),
+    score: avg(l.map(p => trackerScore(p)?.score)),
+    wr: avg(l.map(p => p.scout?.games ? p.scout.winRate : null)),
+    form: avg(l.map(p => p.scout?.games ? p.scout.winRate10 : null)),
+    ovr: avg(l.map(p => p.character?.ovr)),
+    xg: avg(l.map(p => p.scout?.profile?.xgPerMatch)),
+    hrs: avg(l.map(p => p.scout?.profile?.hours)),
+  });
+  const a = T(mine), b = T(opp);
+  const odds = a.sr != null && b.sr != null ? 1 / (1 + Math.pow(10, (b.sr - a.sr) / 400)) : null;
+  const oc = odds == null ? '' : odds >= .52 ? 'good' : odds <= .48 ? 'bad' : '';
+  const r = (label, x, y, fmt) => {
+    const xw = x != null && y != null && x > y, yw = x != null && y != null && y > x;
+    return `<div class="a ${xw ? 'win' : 'lose'}">${fmt(x)}</div><div class="k">${label}</div><div class="b ${yw ? 'win' : 'lose'}">${fmt(y)}</div>`;
+  };
+  return `
+    <div class="card">
+      <div class="odds-top">
+        <div><div class="lbl">Siegchance</div><div class="big ${oc}">${odds == null ? '–' : Math.round(odds * 100) + '%'}</div></div>
+        <div style="text-align:right"><div class="lbl">SR-Differenz</div><div class="big ${oc}" style="font-size:22px">${a.sr != null && b.sr != null ? (sign(a.sr - b.sr) || '±0') : '–'}</div></div>
+      </div>
+      <div class="odds-bar"><i style="width:${odds == null ? 50 : odds * 100}%"></i></div>
+      ${full ? `<div class="cmp">
+        <div class="a lbl" style="color:var(--mine)">Dein Team</div><div class="k"></div><div class="b lbl" style="color:var(--opp)">Gegner</div>
+        ${r('Ø Score', a.score, b.score, v => fix(v, 0))}
+        ${r('Ø SR', a.sr, b.sr, v => fix(v, 0))}
+        ${r('Ø Winrate', a.wr, b.wr, pct)}
+        ${r('Ø Form (L10)', a.form, b.form, pct)}
+        ${r('Ø OVR', a.ovr, b.ovr, v => fix(v))}
+        ${r('Ø xG / Match', a.xg, b.xg, v => fix(v, 2))}
+        ${r('Ø Spielzeit', a.hrs, b.hrs, v => v == null ? '–' : Math.round(v) + ' h')}
+      </div>` : ''}
+    </div>`;
+}
+
+function histCard(all, fmt = 'GAME_FORMAT_FIVE_VS_FIVE') {
+  const label = fmt.includes('FIVE') ? '5v5' : '1v1';
+  const h = (all || []).filter(x => x.format === fmt && x.mode === 'GAME_MODE_RANKED' && x.sr != null).slice(-30);
+  if (h.length < 2) return `<div class="card hist"><span class="dim" style="font-size:12px">Dein ${label}-SR-Verlauf erscheint nach ein paar Ranked-Matches.</span></div>`;
+  const v = h.map(x => x.sr), min = Math.min(...v) - 5, max = Math.max(...v) + 5;
+  const X = i => 4 + i * (592 / (h.length - 1)), Y = s => 52 - (s - min) / (max - min) * 46;
+  const diff = v[v.length - 1] - v[0];
+  return `
+    <div class="card hist">
+      <div class="top"><span>Dein ${label}-SR · letzte ${h.length} Ranked</span>
+        <span><b>${v[v.length - 1]}</b> <span class="${diff >= 0 ? 'good' : 'bad'}">${sign(diff) || '±0'}</span></span></div>
+      <svg viewBox="0 0 600 56" preserveAspectRatio="none">
+        <polyline points="${h.map((x, i) => X(i) + ',' + Y(x.sr)).join(' ')}" fill="none" stroke="#a3adba" stroke-width="1.5" vector-effect="non-scaling-stroke"/>
+        ${h.map((x, i) => `<circle cx="${X(i)}" cy="${Y(x.sr)}" r="2.5" fill="${x.res === 'W' ? '#3ddc97' : x.res === 'L' ? '#ff6b6b' : '#6b7685'}"/>`).join('')}
+      </svg>
+    </div>`;
+}
+
+// ---------- Phasen ----------
+function viewLobby(s, d) {
+  const { mine, opp } = teams(s, d);
+  return matchup(mine, opp, true)
+    + teamTable(mine, d.ownId, 'mine', 'Dein Team', PLAYER_COLORS)
+    + teamTable(opp, d.ownId, 'opp', 'Gegner', null);
+}
+
+function viewLive(s, d) {
+  const { mine, opp } = teams(s, d);
+  return matchup(mine, opp, false)
+    + teamTable(opp, d.ownId, 'opp', 'Gegner', null)
+    + teamMini(mine, d.ownId, PLAYER_COLORS);
+}
+
+function viewPost(s, d) {
+  const h = d.history || [];
+  const entry = h.find(x => x.id === s.id);
+  let res = '<div class="big dim">Match beendet</div><div class="dim" style="margin-top:4px">Ergebnis wird geladen…</div>';
+  if (entry && entry.res) {
+    const t = { W: ['SIEG', 'good'], L: ['NIEDERLAGE', 'bad'], D: ['UNENTSCHIEDEN', ''] }[entry.res];
+    res = `<div class="big ${t[1]}">${t[0]}</div><div class="score">${entry.gf} : ${entry.ga}</div>`;
+  }
+  // Heute, gleicher Modus wie dieses Match
+  const same = x => x.format === s.format && x.mode === s.mode;
+  const label = `${(s.mode || '').includes('RANKED') ? 'Ranked' : 'Quick Play'} ${(s.format || '').includes('FIVE') ? '5v5' : '1v1'}`;
+  const day = new Date(); day.setHours(0, 0, 0, 0);
+  const today = h.filter(x => same(x) && x.at && new Date(x.at) >= day);
+  const w = today.filter(x => x.res === 'W').length, l = today.filter(x => x.res === 'L').length, dr = today.filter(x => x.res === 'D').length;
+  const srStart = today[0]?.sr, srNow = today[today.length - 1]?.sr;
+  const last = [...h].filter(same).reverse().slice(0, 6);
+  return `
+    <div class="card result">${res}
+      ${entry ? `<div class="dim" style="margin-top:6px">SR vor dem Match: <b style="color:var(--text)">${entry.sr}</b> · ${(entry.format || '').includes('FIVE') ? 'Teams Ø' : 'SR'} ${entry.teamAvg} vs ${entry.oppAvg}</div>` : ''}
+    </div>
+    <div class="card">
+      <div class="lbl" style="margin-bottom:8px">Heute · ${label}</div>
+      <div class="stats3">
+        <div><b>${today.length}</b><span class="dim">Matches</span></div>
+        <div><b><span class="good">${w}</span>–<span class="bad">${l}</span>${dr ? `–${dr}` : ''}</b><span class="dim">S–N</span></div>
+        <div><b class="${srNow - srStart >= 0 ? 'good' : 'bad'}">${srStart != null ? (sign(srNow - srStart) || '±0') : '–'}</b><span class="dim">SR (bis Matchstart)</span></div>
+      </div>
+    </div>
+    ${histCard(h, s.format)}
+    <div class="card list">
+      <div class="lbl" style="margin-bottom:4px">Letzte Matches</div>
+      ${last.map(x => `<div class="li"><span class="dim">${new Date(x.at).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}</span>
+        <span class="${x.res === 'W' ? 'good' : x.res === 'L' ? 'bad' : 'dim'}" style="font-weight:600">${x.res ? { W: 'S', L: 'N', D: 'U' }[x.res] + ' ' + x.gf + ':' + x.ga : '…'}</span>
+        <span>${x.sr}</span><span class="dim">${x.teamAvg} vs ${x.oppAvg}</span></div>`).join('')}
+    </div>
+`;
+}
+
+// 1v1: du gegen einen Gegner – direkter Vergleich in einer Tabelle.
+function view1v1(s, d) {
+  const { mine, opp } = teams(s, d);
+  const a = mine[0], b = opp[0];
+  if (!a || !b) return '';
+  const A = a.scout || {}, B = b.scout || {};
+  const a1 = A.one || {}, b1 = B.one || {};
+  const odds = a.skillRating != null && b.skillRating != null ? 1 / (1 + Math.pow(10, (b.skillRating - a.skillRating) / 400)) : null;
+  const oc = odds == null ? '' : odds >= .52 ? 'good' : odds <= .48 ? 'bad' : '';
+  // Zeile: links du, Mitte Label, rechts Gegner; der bessere Wert ist hell
+  const cell = (side, text, win) => `<div class="${side} ${win ? 'win' : 'lose'}">${text}</div>`;
+  const r = (label, x, y, fmt, higher = true) => {
+    const ok = x != null && y != null && x !== y;
+    return cell('a', x == null ? '–' : fmt(x), ok && (x > y) === higher) + `<div class="k">${label}</div>` + cell('b', y == null ? '–' : fmt(y), ok && (y > x) === higher);
+  };
+  const rec = o => o.games ? `${o.wins}–${o.draws}–${o.losses}` : '–';
+  const dots = f => `<div class="form" style="justify-content:inherit">${[...(f || '').slice(0, 5)].map(x => `<i class="${x}"></i>`).join('')}</div>`;
+  const sub = (p, o) => {
+    const bits = [];
+    if (p.squad) bits.push(`Kader Ø ${Math.round(p.squad.avgOvr)}`);
+    const n = o.streak ? +o.streak.slice(1) : 0;
+    if (n >= 3) bits.push(o.streak[0] === 'W' ? `<span class="good">${n}× S</span>` : `<span class="bad">${n}× N</span>`);
+    if (o.games != null && o.games < 10) bits.push('<span style="color:#e5c07b">neu</span>');
+    return bits.join(' · ');
+  };
+  const h = b1.h2h || { W: 0, L: 0, D: 0 };   // aus Sicht des Gegners: seine Siege = deine Niederlagen
+  const met = h.W + h.L + h.D;
+  const nameCell = (side, p, o, color) => `<div class="${side}" style="min-width:0">
+      <div style="font-weight:700;font-size:15px;color:${color};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(p.name)}</div>
+      <div class="dim" style="font-size:11.5px">${sub(p, o)}</div></div>`;
+  return `
+    <div class="card">
+      <div class="odds-top">
+        <div><div class="lbl">Siegchance</div><div class="big ${oc}">${odds == null ? '–' : Math.round(odds * 100) + '%'}</div></div>
+        <div style="text-align:right"><div class="lbl">SR-Differenz</div><div class="big ${oc}" style="font-size:22px">${odds == null ? '–' : (sign(a.skillRating - b.skillRating) || '±0')}</div></div>
+      </div>
+      <div class="odds-bar"><i style="width:${odds == null ? 50 : odds * 100}%"></i></div>
+      ${met ? `<div style="text-align:center;font-size:12.5px">Direkter Vergleich: <b class="${h.L > h.W ? 'good' : h.W > h.L ? 'bad' : ''}">${h.L}–${h.W}${h.D ? '–' + h.D : ''}</b> <span class="dim">(${met} Spiele)</span></div>` : ''}
+    </div>
+    <div class="card">
+      <div class="cmp" style="row-gap:5px">
+        ${nameCell('a', a, a1, 'var(--mine)')}<div class="k"></div>${nameCell('b', b, b1, 'var(--opp)')}
+        <div class="a">${scoreHtml(a, '1v1')}</div><div class="k">Score</div><div class="b">${scoreHtml(b, '1v1')}</div>
+        ${r('SR', a.skillRating, b.skillRating, v => v)}
+        ${r('Rank', a.rank, b.rank, v => v, false)}
+        ${cell('a', rec(a1), false)}<div class="k">Bilanz S–U–N</div>${cell('b', rec(b1), false)}
+        ${r('Winrate', a1.games ? a1.winRate : null, b1.games ? b1.winRate : null, pct)}
+        ${r('Form (L10)', a1.games ? a1.winRate10 : null, b1.games ? b1.winRate10 : null, pct)}
+        <div class="a">${dots(a1.form)}</div><div class="k">Letzte 5</div><div class="b" style="display:flex;justify-content:flex-end">${dots(b1.form)}</div>
+        ${r('Tore / Spiel', a1.games ? a1.goalsFor : null, b1.games ? b1.goalsFor : null, v => v.toFixed(1))}
+        ${r('Gegentore / Spiel', a1.games ? a1.goalsAgainst : null, b1.games ? b1.goalsAgainst : null, v => v.toFixed(1), false)}
+        ${r('Zu Null', a1.games ? a1.cleanSheets : null, b1.games ? b1.cleanSheets : null, pct)}
+        ${r('Kader Ø OVR', a.squad?.avgOvr ?? A.oneStats?.avgOvr, b.squad?.avgOvr ?? B.oneStats?.avgOvr, v => Math.round(v))}
+        ${r('xG / Match', A.profile?.xgPerMatch, B.profile?.xgPerMatch, v => v.toFixed(2))}
+        ${r('Spielzeit', A.profile?.hours, B.profile?.hours, v => Math.round(v) + ' h')}
+        ${r('Heute gespielt', a1.games24h, b1.games24h, v => v)}
+      </div>
+    </div>`;
+}
+
+function viewIdle(d) {
+  return `<div class="empty">${d.logFound ? 'Starte eine Suche – sobald ein Match gefunden ist, erscheinen hier alle Spieler.' : 'Game.log nicht gefunden – starte GOALS.'}</div>`
+    + histCard(d.history, 'GAME_FORMAT_FIVE_VS_FIVE')
+    + ((d.history || []).some(x => x.format === 'GAME_FORMAT_ONE_VS_ONE' && x.mode === 'GAME_MODE_RANKED') ? histCard(d.history, 'GAME_FORMAT_ONE_VS_ONE') : '');
+}
+
+// ---------- Render ----------
+let last = null;
+function render(d) {
+  last = d;
+  const s = d.session;
+  $('me').textContent = d.ownName || '';
+  const scrollY = window.scrollY;
+  if (!d.logFound || !s || !s.home.length) {
+    $('dot').className = 'dot'; $('state').textContent = d.logFound ? 'Warte auf Match' : 'GOALS nicht gestartet'; $('info').textContent = '';
+    $('main').innerHTML = viewIdle(d);
+    return;
+  }
+  const mode = (s.mode || '').includes('RANKED') ? 'Ranked' : 'Quick Play';
+  $('info').textContent = `${mode} ${(s.format || '').includes('FIVE') ? '5v5' : '1v1'} · ${(s.location || '').replace(/ - G\d+$/, '')}`;
+  const phase = new URLSearchParams(location.search).get('phase') // ?phase=lobby|live|post zum Testen
+    || (s.state === 'GAME_SESSION_STATE_POST_GAME_SERVER' ? 'post'
+    : s.state === 'GAME_SESSION_STATE_READY_TO_JOIN_GAME_SERVER' ? 'live' : 'lobby');
+  $('dot').className = 'dot' + (phase === 'post' ? '' : ' live');
+  $('state').textContent = { lobby: 'Lobby', live: 'Match läuft', post: 'Nach dem Match' }[phase];
+  const is1v1 = (s.format || '').includes('ONE_VS_ONE');
+  $('main').innerHTML = phase === 'post' ? viewPost(s, d) : is1v1 ? view1v1(s, d) : phase === 'live' ? viewLive(s, d) : viewLobby(s, d);
+  window.scrollTo(0, scrollY);
+}
+
+(function connect() {
+  const es = new EventSource('/events');
+  let ui = null;
+  es.onmessage = e => {
+    const d = JSON.parse(e.data);
+    if (ui && d.uiVersion && d.uiVersion !== ui) return location.reload(); // neue Overlay-Version
+    ui = d.uiVersion;
+    render(d);
+  };
+  es.onerror = () => { $('dot').className = 'dot'; $('state').textContent = 'Server offline – overlay.bat neu starten'; };
+})();
+</script>
+</body>
+</html>

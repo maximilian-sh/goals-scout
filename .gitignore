@@ -1,0 +1,5 @@
+node_modules/
+data/
+dist/
+overlay/update-token.json
+*.log

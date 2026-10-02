@@ -1,0 +1,57 @@
+{
+  "name": "goals-live-scout",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Live-Scout & Overlay für GOALS 5v5 Ranked",
+  "main": "overlay/main.js",
+  "scripts": {
+    "start": "electron .",
+    "server": "node server.js",
+    "build": "electron-builder --win --publish never",
+    "release": "node scripts/release.js"
+  },
+  "devDependencies": {
+    "electron": "^44.5.1",
+    "electron-builder": "^26.15.3"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
+  },
+  "productName": "GOALS Scout",
+  "author": "maximilian-sh",
+  "build": {
+    "appId": "com.maximiliansh.goalsscout",
+    "productName": "GOALS Scout",
+    "files": [
+      "overlay/**",
+      "public/**",
+      "server.js",
+      "package.json"
+    ],
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "runAfterFinish": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "GOALS Scout",
+      "artifactName": "GOALS-Scout-Setup-${version}.${ext}"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "maximilian-sh",
+        "repo": "goals-scout",
+        "private": true,
+        "releaseType": "release"
+      }
+    ]
+  }
+}

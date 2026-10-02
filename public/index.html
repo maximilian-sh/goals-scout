@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GOALS Live Scout</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0d1014; --panel: #151a20; --panel2: #1b2129; --line: #262e38;
+    --text: #e8edf2; --muted: #8592a3; --mine: #2fd38a; --opp: #ff5d6c;
+    --win: #2fd38a; --loss: #ff5d6c; --draw: #f2c14e; --accent: #5ab0ff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.4 "Segoe UI", system-ui, sans-serif; padding: 16px; }
+  header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+  h1 { font-size: 18px; margin: 0; letter-spacing: .5px; }
+  h1 span { color: var(--mine); }
+  .pill { background: var(--panel2); border: 1px solid var(--line); border-radius: 999px;
+    padding: 3px 10px; font-size: 12px; color: var(--muted); }
+  .pill.live { color: var(--mine); border-color: color-mix(in srgb, var(--mine) 40%, transparent); }
+  .pill.live::before { content: "●"; margin-right: 5px; animation: blink 1.4s infinite; }
+  @keyframes blink { 50% { opacity: .25; } }
+  .muted { color: var(--muted); }
+
+  .matchup { display: grid; grid-template-columns: 1fr auto 1fr; gap: 12px; align-items: center;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; margin-bottom: 14px; }
+  .matchup .side { display: flex; gap: 22px; }
+  .matchup .side.right { justify-content: flex-end; text-align: right; }
+  .kv b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }
+  .kv small { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .6px; }
+  .odds { text-align: center; min-width: 220px; }
+  .odds .bar { height: 8px; border-radius: 4px; background: var(--opp); overflow: hidden; margin: 6px 0 4px; }
+  .odds .bar i { display: block; height: 100%; background: var(--mine); }
+  .odds b { font-size: 22px; }
+
+  .teams { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 1000px) { .teams { grid-template-columns: 1fr; } .matchup { grid-template-columns: 1fr; } .matchup .side.right { justify-content: flex-start; text-align: left; } }
+  .team h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; margin: 0 0 8px; }
+  .team.mine h2 { color: var(--mine); } .team.opp h2 { color: var(--opp); }
+
+  .card { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--line);
+    border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; display: grid;
+    grid-template-columns: 1.4fr 1fr 1.3fr; gap: 12px; align-items: center; }
+  .team.mine .card { border-left-color: var(--mine); } .team.opp .card { border-left-color: var(--opp); }
+  .card.me { background: color-mix(in srgb, var(--mine) 8%, var(--panel)); }
+  .name { font-weight: 600; font-size: 15px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .name a { color: inherit; text-decoration: none; } .name a:hover { text-decoration: underline; }
+  .tag { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px;
+    padding: 1px 6px; border-radius: 4px; background: var(--panel2); color: var(--muted); }
+  .tag.c { color: var(--draw); } .tag.you { color: var(--mine); }
+  .tag.hot { color: #ff9f43; } .tag.cold { color: var(--accent); } .tag.new { color: var(--draw); }
+  .tag.with { color: var(--mine); } .tag.vs { color: var(--opp); }
+  .sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .sr { font-variant-numeric: tabular-nums; }
+  .sr b { font-size: 18px; } .sr .rank { color: var(--muted); font-size: 12px; margin-left: 6px; }
+  .ovr { display: inline-flex; align-items: baseline; gap: 4px; margin-top: 2px; font-size: 12px; color: var(--muted); }
+  .ovr b { color: var(--text); font-size: 14px; }
+  .stats { display: grid; grid-template-columns: repeat(6, 1fr); gap: 3px; margin-top: 6px; }
+  .stat { font-size: 9px; color: var(--muted); text-align: center; }
+  .stat i { display: block; height: 3px; background: var(--line); border-radius: 2px; margin-top: 2px; overflow: hidden; }
+  .stat i u { display: block; height: 100%; background: var(--accent); }
+  .wr { font-variant-numeric: tabular-nums; }
+  .wr b { font-size: 18px; }
+  .form { display: flex; gap: 3px; margin-top: 5px; }
+  .form span { width: 14px; height: 14px; border-radius: 3px; font-size: 9px; font-weight: 700;
+    display: grid; place-items: center; color: #0d1014; }
+  .form .W { background: var(--win); } .form .L { background: var(--loss); } .form .D { background: var(--draw); }
+
+  .empty { background: var(--panel); border: 1px dashed var(--line); border-radius: 10px; padding: 40px; text-align: center; color: var(--muted); }
+
+  section.hist { margin-top: 18px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; }
+  section.hist h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; margin: 0 0 10px; color: var(--muted); }
+  .histgrid { display: grid; grid-template-columns: 2fr 1fr; gap: 18px; }
+  @media (max-width: 1000px) { .histgrid { grid-template-columns: 1fr; } }
+  svg.spark { width: 100%; height: 140px; display: block; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+  td, th { padding: 4px 6px; text-align: left; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 500; }
+  .res { font-weight: 700; } .res.W { color: var(--win); } .res.L { color: var(--loss); } .res.D { color: var(--draw); }
+  .up { color: var(--win); } .down { color: var(--loss); }
+</style>
+</head>
+<body>
+<header>
+  <h1>GOALS <span>Live Scout</span></h1>
+  <span id="conn" class="pill">verbinde…</span>
+  <span id="player" class="pill"></span>
+  <span id="state" class="pill"></span>
+  <span id="info" class="muted"></span>
+</header>
+
+<div id="main"></div>
+
+<section class="hist">
+  <h2>Dein 5v5 Ranked Verlauf</h2>
+  <div class="histgrid">
+    <div><svg id="spark" class="spark" viewBox="0 0 600 140" preserveAspectRatio="none"></svg><div id="histsum" class="muted"></div></div>
+    <div style="max-height: 220px; overflow:auto"><table id="histtable"></table></div>
+  </div>
+</section>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const pretty = (s) => (s || '').replace(/^(GAME_MODE_|GAME_FORMAT_|GAME_SESSION_STATE_)/, '').replace(/_/g, ' ').toLowerCase();
+const STATE_LABEL = {
+  GAME_SESSION_STATE_LOBBY: 'Lobby',
+  GAME_SESSION_STATE_WAITING_FOR_GAME_SERVER: 'Warte auf Server',
+  GAME_SESSION_STATE_READY_TO_JOIN_GAME_SERVER: 'Match läuft',
+  GAME_SESSION_STATE_POST_GAME_SERVER: 'Match beendet',
+};
+
+function avg(arr) { const v = arr.filter(x => x != null); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; }
+function eloWin(a, b) { return 1 / (1 + Math.pow(10, (b - a) / 400)); }
+
+function tags(p, isMe) {
+  const t = [];
+  if (isMe) t.push('<span class="tag you">Du</span>');
+  if (p.captain) t.push('<span class="tag c">Captain</span>');
+  const sc = p.scout;
+  if (sc) {
+    const streak = (sc.form.match(/^(W+|L+)/) || [''])[0];
+    if (streak.length >= 3 && streak[0] === 'W') t.push(`<span class="tag hot" title="Siegesserie">🔥 ${streak.length}W</span>`);
+    if (streak.length >= 3 && streak[0] === 'L') t.push(`<span class="tag cold" title="Niederlagenserie">${streak.length}L Serie</span>`);
+    if (sc.games < 10) t.push(`<span class="tag new" title="Wenige Ranked-Spiele in den letzten 50 Matches">Neu (${sc.games})</span>`);
+    if (!isMe && sc.withMe) t.push(`<span class="tag with" title="Schon zusammen gespielt">mit dir ×${sc.withMe}</span>`);
+    if (!isMe && sc.againstMe) t.push(`<span class="tag vs" title="Schon gegen dich gespielt">gegen dich ×${sc.againstMe}</span>`);
+  }
+  return t.join('');
+}
+
+function card(p, ownId) {
+  const isMe = p.userId === ownId;
+  const ch = p.character || {};
+  const sc = p.scout;
+  const steam = p.steamId ? `https://steamcommunity.com/profiles/${p.steamId}` : null;
+  const statBars = ch.stats ? Object.entries(ch.stats).map(([k, v]) =>
+    `<div class="stat" title="${k} ${v}">${k}<i><u style="width:${v}%"></u></i></div>`).join('') : '';
+  let scoutHtml = '<span class="muted">lade…</span>';
+  if (p.scoutError) scoutHtml = `<span class="muted">keine Daten (${esc(p.scoutError)})</span>`;
+  else if (sc && sc.games === 0) scoutHtml = '<span class="muted">keine 5v5 Spiele gefunden</span>';
+  else if (sc) {
+    const wr = Math.round(sc.winRate * 100);
+    const gd = sc.goalDiff >= 0 ? '+' + sc.goalDiff.toFixed(1) : sc.goalDiff.toFixed(1);
+    scoutHtml = `
+      <div class="wr"><b style="color:${wr >= 55 ? 'var(--win)' : wr <= 45 ? 'var(--loss)' : 'var(--text)'}">${wr}%</b>
+        <span class="muted"> WR · ${sc.games} ${sc.sampleType === 'ranked' ? 'Ranked' : '5v5'} · ⌀ ${gd} TD</span></div>
+      <div class="form" title="Letzte Spiele, neuestes links">${[...sc.form].map(r => `<span class="${r}">${r}</span>`).join('')}</div>`;
+  }
+  return `
+  <div class="card ${isMe ? 'me' : ''}">
+    <div>
+      <div class="name">${steam ? `<a href="${steam}" target="_blank" rel="noopener">${esc(p.name)}</a>` : esc(p.name)} ${tags(p, isMe)}</div>
+      <div class="sub">${ch.name ? esc(ch.name) + ' · ' : ''}${esc(ch.tier || '')}${ch.trait ? ' · ' + esc(ch.trait.toLowerCase()) : ''}</div>
+      ${statBars ? `<div class="stats">${statBars}</div>` : ''}
+    </div>
+    <div>
+      <div class="sr"><b>${p.skillRating ?? '–'}</b><span class="rank">Rank ${p.rank ?? '–'}</span></div>
+      <div class="ovr"><b>${ch.ovr ?? '–'}</b> OVR ${esc(ch.role || '')}</div>
+    </div>
+    <div>${scoutHtml}</div>
+  </div>`;
+}
+
+function render(d) {
+  $('player').textContent = d.ownName ? d.ownName : 'Spieler unbekannt';
+  const s = d.session;
+  if (!d.logFound) {
+    $('main').innerHTML = `<div class="empty">Game.log nicht gefunden.<br><small>${esc(d.logPath)}</small><br>Starte GOALS.</div>`;
+  } else if (!s || !s.home.length) {
+    $('state').textContent = 'Warte auf Lobby'; $('state').className = 'pill';
+    $('info').textContent = '';
+    $('main').innerHTML = `<div class="empty">Noch keine Lobby erkannt. Starte eine Suche in GOALS – sobald ein Match gefunden ist, erscheinen hier alle Spieler.</div>`;
+  } else {
+    const live = s.state !== 'GAME_SESSION_STATE_POST_GAME_SERVER';
+    $('state').textContent = STATE_LABEL[s.state] || pretty(s.state);
+    $('state').className = 'pill' + (live ? ' live' : '');
+    $('info').textContent = `${pretty(s.format)} · ${pretty(s.mode)}${s.location ? ' · ' + s.location : ''}`;
+
+    const meHome = s.home.includes(d.ownId) || !s.away.includes(d.ownId);
+    const mine = (meHome ? s.home : s.away).map(id => s.players[id]);
+    const opp = (meHome ? s.away : s.home).map(id => s.players[id]);
+    const srM = avg(mine.map(p => p.skillRating)), srO = avg(opp.map(p => p.skillRating));
+    const ovM = avg(mine.map(p => p.character?.ovr)), ovO = avg(opp.map(p => p.character?.ovr));
+    const wrM = avg(mine.map(p => p.scout?.games ? p.scout.winRate : null)), wrO = avg(opp.map(p => p.scout?.games ? p.scout.winRate : null));
+    const odds = srM != null && srO != null ? eloWin(srM, srO) : null;
+    const f = (v, dig = 0) => v == null ? '–' : v.toFixed(dig);
+    const pct = (v) => v == null ? '–' : Math.round(v * 100) + '%';
+
+    $('main').innerHTML = `
+      <div class="matchup">
+        <div class="side">
+          <div class="kv"><small>⌀ SR</small><b style="color:var(--mine)">${f(srM)}</b></div>
+          <div class="kv"><small>⌀ OVR</small><b>${f(ovM, 1)}</b></div>
+          <div class="kv"><small>⌀ Winrate</small><b>${pct(wrM)}</b></div>
+        </div>
+        <div class="odds">
+          <small class="muted">Siegchance (SR-Schätzung)</small>
+          <div class="bar"><i style="width:${odds == null ? 50 : odds * 100}%"></i></div>
+          <b>${odds == null ? '–' : Math.round(odds * 100) + '%'}</b>
+          <div class="muted" style="font-size:12px">SR-Differenz ${srM != null && srO != null ? (srM - srO >= 0 ? '+' : '') + Math.round(srM - srO) : '–'}</div>
+        </div>
+        <div class="side right">
+          <div class="kv"><small>⌀ Winrate</small><b>${pct(wrO)}</b></div>
+          <div class="kv"><small>⌀ OVR</small><b>${f(ovO, 1)}</b></div>
+          <div class="kv"><small>⌀ SR</small><b style="color:var(--opp)">${f(srO)}</b></div>
+        </div>
+      </div>
+      <div class="teams">
+        <div class="team mine"><h2>Dein Team</h2>${mine.map(p => card(p, d.ownId)).join('')}</div>
+        <div class="team opp"><h2>Gegner</h2>${opp.map(p => card(p, d.ownId)).join('')}</div>
+      </div>`;
+  }
+  renderHistory(d.history || []);
+}
+
+function renderHistory(all) {
+  const h = all.filter(x => x.format === 'GAME_FORMAT_FIVE_VS_FIVE' && x.mode === 'GAME_MODE_RANKED' && x.sr != null);
+  const svg = $('spark');
+  if (h.length < 2) {
+    svg.innerHTML = `<text x="300" y="75" text-anchor="middle" fill="#8592a3" font-size="13">Spiel ein paar Ranked-Matches, dann erscheint hier dein SR-Verlauf.</text>`;
+  } else {
+    const vals = h.map(x => x.sr), min = Math.min(...vals) - 10, max = Math.max(...vals) + 10;
+    const X = i => 10 + i * (580 / (h.length - 1)), Y = v => 130 - (v - min) / (max - min) * 120;
+    const pts = h.map((x, i) => `${X(i).toFixed(1)},${Y(x.sr).toFixed(1)}`).join(' ');
+    const dots = h.map((x, i) => `<circle cx="${X(i)}" cy="${Y(x.sr)}" r="3.5" fill="${x.res === 'W' ? '#2fd38a' : x.res === 'L' ? '#ff5d6c' : x.res === 'D' ? '#f2c14e' : '#8592a3'}"><title>${x.sr} SR${x.res ? ' · ' + x.res + ' ' + x.gf + ':' + x.ga : ''}</title></circle>`).join('');
+    svg.innerHTML = `<polyline points="${pts}" fill="none" stroke="#5ab0ff" stroke-width="2" vector-effect="non-scaling-stroke"/>${dots}
+      <text x="4" y="12" fill="#8592a3" font-size="11">${Math.round(max)}</text><text x="4" y="136" fill="#8592a3" font-size="11">${Math.round(min)}</text>`;
+  }
+  const done = h.filter(x => x.res);
+  const w = done.filter(x => x.res === 'W').length;
+  const first = h[0]?.sr, last = h[h.length - 1]?.sr;
+  $('histsum').innerHTML = h.length ? `${h.length} Matches erfasst · ${done.length ? Math.round(w / done.length * 100) + '% Winrate' : ''} · SR ${first} → ${last}
+    <span class="${last - first >= 0 ? 'up' : 'down'}">(${last - first >= 0 ? '+' : ''}${last - first})</span>` : '';
+  const rows = [...h].reverse().slice(0, 30).map((x, i, arr) => {
+    const next = arr[i - 1]; // SR-Änderung durch dieses Match = SR vor dem nächsten Match − SR davor
+    const delta = next ? next.sr - x.sr : null;
+    return `<tr><td>${new Date(x.at).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
+      <td class="res ${x.res || ''}">${x.res ? x.res + ' ' + x.gf + ':' + x.ga : '…'}</td>
+      <td>${x.sr}${delta != null ? ` <span class="${delta >= 0 ? 'up' : 'down'}">${delta >= 0 ? '+' : ''}${delta}</span>` : ''}</td>
+      <td class="muted">${x.teamAvg} vs ${x.oppAvg}</td></tr>`;
+  }).join('');
+  $('histtable').innerHTML = `<tr><th>Zeit</th><th>Ergebnis</th><th>SR → Änderung</th><th>⌀ SR Teams</th></tr>${rows}`;
+}
+
+function connect() {
+  const es = new EventSource('/events');
+  es.onopen = () => { $('conn').textContent = 'verbunden'; $('conn').className = 'pill live'; };
+  es.onmessage = (e) => render(JSON.parse(e.data));
+  es.onerror = () => { $('conn').textContent = 'Server offline – starte start.bat'; $('conn').className = 'pill'; };
+}
+connect();
+</script>
+</body>
+</html>
