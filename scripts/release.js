@@ -31,7 +31,10 @@ const bump = process.argv[2] || 'patch';
 run(`npm version ${bump} -m "Release %s"`);
 const version = require(path.join(root, 'package.json')).version;
 
-// Zum Hochladen dein normales gh-Login verwenden (bleibt auf deinem PC)
-run('npx electron-builder --win --publish always', { GH_TOKEN: out('gh auth token') });
+// Erst Commit + Tag pushen, damit das GitHub-Release auf den richtigen Commit zeigt
 run('git push --follow-tags');
+// Zum Hochladen dein normales gh-Login verwenden (bleibt auf deinem PC).
+// Upload bricht manchmal ab – dann einfach nochmal (bereits hochgeladene Dateien werden überschrieben).
+const publish = () => run('npx electron-builder --win --publish always', { GH_TOKEN: out('gh auth token') });
+try { publish(); } catch { console.log('\nUpload fehlgeschlagen – zweiter Versuch …\n'); publish(); }
 console.log(`\n✔ Version ${version} veröffentlicht – Overlays aktualisieren sich in den nächsten Minuten.`);
