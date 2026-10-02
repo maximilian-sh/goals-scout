@@ -447,10 +447,89 @@ function view1v1(s, d) {
     </div>`;
 }
 
+// Startseite (Menü, keine Lobby): eigenes Profil, heute, Form, beste Mitspieler, SR-Verlauf.
+function viewHome(d) {
+  const h = d.history || [];
+  const r5 = h.filter(x => x.format === 'GAME_FORMAT_FIVE_VS_FIVE' && x.mode === 'GAME_MODE_RANKED');
+  const r1 = h.filter(x => x.format === 'GAME_FORMAT_ONE_VS_ONE' && x.mode === 'GAME_MODE_RANKED');
+  const sc = d.me && d.me.scout;
+  const lastSr5 = r5.length ? r5[r5.length - 1].sr : null;
+  const self = { name: d.ownName, skillRating: lastSr5, scout: sc };
+  const ts5 = sc ? trackerScore(self, '5v5') : null;
+  const ts1 = sc && sc.one && sc.one.games >= 5 ? trackerScore({ ...self, skillRating: sc.oneStats?.sr ?? (r1.length ? r1[r1.length - 1].sr : null) }, '1v1') : null;
+  const scoreCls = v => v >= 750 ? 's-elite' : v >= 600 ? 's-high' : v >= 450 ? 's-mid' : v >= 300 ? 's-low' : 's-bad';
+
+  // Heute (alle Ranked-Matches, nach Modus getrennt zusammengefasst)
+  const day = new Date(); day.setHours(0, 0, 0, 0);
+  const todayOf = list => list.filter(x => x.at && new Date(x.at) >= day);
+  const t5 = todayOf(r5), t1 = todayOf(r1);
+  const wl = l => ({ w: l.filter(x => x.res === 'W').length, l: l.filter(x => x.res === 'L').length, d: l.filter(x => x.res === 'D').length });
+  const todayRow = (label, l) => {
+    if (!l.length) return '';
+    const r = wl(l), srD = l.length > 1 ? l[l.length - 1].sr - l[0].sr : null;
+    return `<div class="li"><span>${label}</span><span><b>${l.length}</b> <span class="dim">Spiele</span></span>
+      <span><b class="good">${r.w}</b>–<b class="bad">${r.l}</b>${r.d ? '–' + r.d : ''}</span>
+      <span class="${srD > 0 ? 'good' : srD < 0 ? 'bad' : 'dim'}">${srD == null ? '' : (sign(srD) || '±0') + ' SR'}</span></div>`;
+  };
+  const todayHtml = todayRow('5v5', t5) + todayRow('1v1', t1);
+
+  const n = sc && sc.streak ? +sc.streak.slice(1) : 0;
+  const streak = n >= 2 ? (sc.streak[0] === 'W' ? `<span class="good">${n} Siege in Folge</span>` : `<span class="bad">${n} Niederlagen in Folge</span>`) : '';
+  const dots = f => `<div class="form" style="justify-content:flex-start;gap:3px">${[...(f || '')].map(x => `<i class="${x}" style="width:10px;height:10px"></i>`).join('')}</div>`;
+  const mates = (sc && sc.topMates) || [];
+  const pr = (sc && sc.profile) || {};
+
+  return `
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
+        <div style="min-width:0">
+          <div class="lbl">Dein Profil</div>
+          <div style="font-size:20px;font-weight:750;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(d.ownName || 'Unbekannt')}</div>
+          <div class="dim" style="font-size:12px">${[pr.hours != null ? Math.round(pr.hours) + ' h gespielt' : null, pr.matches != null ? pr.matches + ' Matches' : null, pr.xgPerMatch != null ? 'xG ' + pr.xgPerMatch.toFixed(2) + '/Sp' : null].filter(Boolean).join(' · ')}</div>
+        </div>
+        <div style="text-align:right;flex:none">
+          <div class="lbl">Score</div>
+          <div class="big ${ts5 ? scoreCls(ts5.score) : 'dim'}">${ts5 ? ts5.score : '…'}</div>
+        </div>
+      </div>
+      <div class="stats3" style="margin-top:12px">
+        <div><b>${lastSr5 ?? '–'}</b><span class="dim">SR 5v5</span></div>
+        <div><b class="${wrCls(sc?.winRate)}">${sc && sc.games ? pct(sc.winRate) : '–'}</b><span class="dim">Winrate 5v5</span></div>
+        <div><b>${ts1 ? `<span class="${scoreCls(ts1.score)}">${ts1.score}</span>` : (sc?.oneStats?.sr ?? '–')}</b><span class="dim">${ts1 ? 'Score 1v1' : 'SR 1v1'}</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">
+        <span class="lbl">Form · letzte 10</span><span style="font-size:12px">${streak}</span>
+      </div>
+      ${sc ? dots(sc.form) : '<span class="dim">lädt…</span>'}
+    </div>
+
+    ${todayHtml ? `<div class="card list"><div class="lbl" style="margin-bottom:4px">Heute</div>${todayHtml}</div>` : ''}
+
+    ${mates.length ? `<div class="card list">
+      <div class="lbl" style="margin-bottom:4px">Deine Mitspieler · Ranked 5v5</div>
+      ${mates.map(m => `<div class="li"><span style="font-weight:600">${esc(m.name)}</span><span class="dim">${m.games} Spiele</span>
+        <span class="${wrCls(m.wins / m.games)}" style="font-weight:600">${pct(m.wins / m.games)}</span></div>`).join('')}
+    </div>` : ''}
+
+    ${histCard(h, 'GAME_FORMAT_FIVE_VS_FIVE')}
+    ${r1.length >= 2 ? histCard(h, 'GAME_FORMAT_ONE_VS_ONE') : ''}
+
+    ${r5.length || r1.length ? `<div class="card list">
+      <div class="lbl" style="margin-bottom:4px">Letzte Matches</div>
+      ${[...r5, ...r1].sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 5).map(x => `<div class="li">
+        <span class="dim">${new Date(x.at).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}</span>
+        <span class="dim">${(x.format || '').includes('FIVE') ? '5v5' : '1v1'}</span>
+        <span class="${x.res === 'W' ? 'good' : x.res === 'L' ? 'bad' : 'dim'}" style="font-weight:600">${x.res ? { W: 'S', L: 'N', D: 'U' }[x.res] + ' ' + x.gf + ':' + x.ga : '…'}</span>
+        <span>${x.sr}</span></div>`).join('')}
+    </div>` : ''}`;
+}
+
 function viewIdle(d) {
-  return `<div class="empty">${d.logFound ? 'Starte eine Suche – sobald ein Match gefunden ist, erscheinen hier alle Spieler.' : 'Game.log nicht gefunden – starte GOALS.'}</div>`
-    + histCard(d.history, 'GAME_FORMAT_FIVE_VS_FIVE')
-    + ((d.history || []).some(x => x.format === 'GAME_FORMAT_ONE_VS_ONE' && x.mode === 'GAME_MODE_RANKED') ? histCard(d.history, 'GAME_FORMAT_ONE_VS_ONE') : '');
+  if (!d.logFound) return `<div class="empty">Game.log nicht gefunden – starte GOALS.</div>`;
+  return viewHome(d);
 }
 
 // ---------- Render ----------
@@ -461,7 +540,7 @@ function render(d) {
   $('me').textContent = d.ownName || '';
   const scrollY = window.scrollY;
   if (!d.logFound || !s || !s.home.length) {
-    $('dot').className = 'dot'; $('state').textContent = d.logFound ? 'Warte auf Match' : 'GOALS nicht gestartet'; $('info').textContent = '';
+    $('dot').className = 'dot'; $('state').textContent = d.logFound ? 'Im Menü' : 'GOALS nicht gestartet'; $('info').textContent = '';
     $('main').innerHTML = viewIdle(d);
     return;
   }

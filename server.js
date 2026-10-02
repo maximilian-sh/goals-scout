@@ -192,10 +192,12 @@ async function fetchPlayer(userId) {
   const c = playerCache.get(userId);
   if (c && Date.now() - c.at < PLAYER_CACHE_MS) return c.data;
   const sessions = [];
+  const names = {};
   let oneStats = null;
   for (let page = 1; page <= PAGES; page++) {
     const json = await getJson(`${API}?userId=${userId}&page=${page}&pageSize=50`);
     sessions.push(...(json.sessions || []));
+    for (const u of Object.values(json.users || {})) if (u && u.id && u.goals_username) names[u.id] = u.goals_username;
     // Offizielle 1v1-Ranked-Statistik steckt in userStats (für alle Spieler der geladenen Matches)
     for (const us of json.userStats || []) {
       const st = us.stats || {};
@@ -208,6 +210,10 @@ async function fetchPlayer(userId) {
   }
   const profile = await fetchProfile(userId).catch(() => null);
   const data = { ...summarizePlayer(userId, sessions), oneStats, profile };
+  // Häufigste Mitspieler mit Bilanz (für die eigene Startseite)
+  data.topMates = Object.entries(data.mateRecords)
+    .map(([id, r]) => ({ id, name: names[id] || (seen[id] && seen[id].name) || id.slice(0, 8), games: r.n, wins: r.w }))
+    .filter(m => m.games >= 3).sort((a, b) => b.games - a.games).slice(0, 4);
   playerCache.set(userId, { at: Date.now(), data });
   return data;
 }
@@ -247,6 +253,7 @@ function resultFor(matchResult, isHome) {
 function summarizePlayer(userId, sessions) {
   const ranked5 = [], quick5 = [], ranked1 = [], other1 = [];
   const mates = {};      // userId -> gemeinsame 5v5-Matches im selben Team
+  const mateRecords = {}; // userId -> { n, w } nur Ranked 5v5
   const h2h = { withW: 0, withL: 0, withD: 0, vsW: 0, vsL: 0, vsD: 0 }; // 5v5, aus Sicht dieses Spielers
   const h2h1 = { W: 0, L: 0, D: 0 };                                   // 1v1 gegen dich, aus seiner Sicht
   for (const s of sessions) {
@@ -279,7 +286,13 @@ function summarizePlayer(userId, sessions) {
       gf: (isHome ? f.home_team.score : f.away_team.score) || 0,
       ga: (isHome ? f.away_team.score : f.home_team.score) || 0 };
     (md.game_mode === 'GAME_MODE_RANKED' ? ranked5 : quick5).push(m);
-    for (const id of myIds) if (id !== userId) mates[id] = (mates[id] || 0) + 1;
+    for (const id of myIds) if (id !== userId) {
+      mates[id] = (mates[id] || 0) + 1;
+      if (md.game_mode === 'GAME_MODE_RANKED') {
+        const r = mateRecords[id] ||= { n: 0, w: 0 };
+        r.n++; if (m.res === 'W') r.w++;
+      }
+    }
     if (ownId && userId !== ownId) {
       if (myIds.includes(ownId)) h2h['with' + m.res]++;
       if (oppIds.includes(ownId)) h2h['vs' + m.res]++;
@@ -294,7 +307,7 @@ function summarizePlayer(userId, sessions) {
   return {
     ...five, ranked5: ranked5.length, quick5: quick5.length,
     withMe: h2h.withW + h2h.withL + h2h.withD, againstMe: h2h.vsW + h2h.vsL + h2h.vsD,
-    h2h, mates, one,
+    h2h, mates, mateRecords, one,
   };
 }
 
@@ -422,10 +435,27 @@ async function fillResults(force) {
 }
 
 // ---------- HTTP + SSE ----------
+// ---------- Eigenes Profil (Startseite im Overlay, wenn gerade keine Lobby offen ist) ----------
+let me = null;
+function resolveOwnId() {
+  if (ownId || !ownName) return;
+  // Nach einem Spielstart ist noch keine Lobby im Log – dann aus früheren Lobbys (players.json) ermitteln
+  const hit = Object.entries(seen).find(([, e]) => e.name === ownName);
+  if (hit) ownId = hit[0];
+}
+async function refreshMe() {
+  resolveOwnId();
+  if (!ownId) return;
+  try {
+    const data = await fetchPlayer(ownId); // 10 min Cache
+    if (!me || me.scout !== data) { me = { id: ownId, name: ownName, scout: data }; broadcast(); }
+  } catch { /* offline */ }
+}
+
 function snapshot() {
   return {
     logPath: LOG_PATH, logFound: fs.existsSync(LOG_PATH),
-    ownName, ownId, session, history: history.slice(-100), uiVersion: uiVersion(),
+    ownName, ownId, me, session, history: history.slice(-100), uiVersion: uiVersion(),
   };
 }
 function uiVersion() {
@@ -476,6 +506,8 @@ session = null;
 readLog(true);
 enrichSession();
 fillResults(true);
+refreshMe();
+setInterval(refreshMe, 60 * 1000);
 
 setInterval(() => {
   if (readLog(false)) {
