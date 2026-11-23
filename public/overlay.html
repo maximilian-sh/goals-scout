@@ -279,6 +279,12 @@ function teams(s, d) {
   };
 }
 
+// Elo, angepasst an die eigenen Ranked-5v5-Ergebnisse, wenn das im Backtest besser war.
+function winChance(mySr, oppSr) {
+  const d = (mySr - oppSr) / 400 * Math.LN10, m = last && last.winModel;
+  return 1 / (1 + Math.exp(-(m && m.use ? m.a + m.b * d : d)));
+}
+
 function matchup(mine, opp, full) {
   const T = l => ({
     sr: avg(l.map(p => p.skillRating)),
@@ -290,7 +296,7 @@ function matchup(mine, opp, full) {
     hrs: avg(l.map(p => p.scout?.profile?.hours)),
   });
   const a = T(mine), b = T(opp);
-  const odds = a.sr != null && b.sr != null ? 1 / (1 + Math.pow(10, (b.sr - a.sr) / 400)) : null;
+  const odds = a.sr != null && b.sr != null ? winChance(a.sr, b.sr) : null;
   const oc = odds == null ? '' : odds >= .52 ? 'good' : odds <= .48 ? 'bad' : '';
   const r = (label, x, y, fmt) => {
     const xw = x != null && y != null && x > y, yw = x != null && y != null && y > x;
@@ -361,7 +367,7 @@ function viewPost(s, d) {
   const same = x => x.format === s.format && x.mode === s.mode;
   const label = `${(s.mode || '').includes('RANKED') ? 'Ranked' : 'Quick Play'} ${(s.format || '').includes('FIVE') ? '5v5' : '1v1'}`;
   const day = new Date(); day.setHours(0, 0, 0, 0);
-  const today = h.filter(x => same(x) && x.at && new Date(x.at) >= day);
+  const today = h.filter(x => same(x) && x.res && x.at && new Date(x.at) >= day);
   const w = today.filter(x => x.res === 'W').length, l = today.filter(x => x.res === 'L').length, dr = today.filter(x => x.res === 'D').length;
   const srStart = today[0]?.sr, srNow = today[today.length - 1]?.sr;
   const last = [...h].filter(same).reverse().slice(0, 6);
@@ -461,7 +467,7 @@ function viewHome(d) {
 
   // Heute (alle Ranked-Matches, nach Modus getrennt zusammengefasst)
   const day = new Date(); day.setHours(0, 0, 0, 0);
-  const todayOf = list => list.filter(x => x.at && new Date(x.at) >= day);
+  const todayOf = list => list.filter(x => x.res && x.at && new Date(x.at) >= day);
   const t5 = todayOf(r5), t1 = todayOf(r1);
   const wl = l => ({ w: l.filter(x => x.res === 'W').length, l: l.filter(x => x.res === 'L').length, d: l.filter(x => x.res === 'D').length });
   const todayRow = (label, l) => {

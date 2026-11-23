@@ -4,6 +4,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const manager = require('./manager');
 
 const PORT = Number(process.env.PORT) || 7777;
 const LOG_PATH = process.env.GOALS_LOG ||
@@ -23,12 +24,26 @@ const playerCache = new Map(); // userId -> { at, data }
 const clients = new Set();
 let history = loadHistory();
 
+const SQUAD_FILE = path.join(DATA_DIR, 'squad.json');
+const MATCH_STATS_FILE = path.join(DATA_DIR, 'matchstats.json');
+const POST_HOLD_MS = 3 * 60 * 1000; // so lange bleibt die Nach-dem-Match-Ansicht, danach Startseite
+const PENDING_MS = 6 * 3600 * 1000; // ältere Lobbys ohne Ergebnis wurden nie gespielt
+let squad = manager.readJson(SQUAD_FILE, null);
+let squadDirty = false;
+
 function loadHistory() {
-  try { return JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8')); } catch { return []; }
+  let raw;
+  try { raw = fs.readFileSync(HISTORY_FILE, 'utf8'); } catch { return []; }
+  try { return JSON.parse(raw); } catch {
+    // Kaputte Datei nicht beim nächsten Speichern überschreiben
+    fs.copyFileSync(HISTORY_FILE, `${HISTORY_FILE}.corrupt-${Date.now()}`);
+    return [];
+  }
 }
 function saveHistory() {
-  fs.writeFileSync(HISTORY_FILE, JSON.stringify(history, null, 1));
+  manager.writeJsonAtomic(HISTORY_FILE, history, 1);
 }
+const isPending = h => !h.res && h.at && Date.now() - Date.parse(`${String(h.at).slice(0, 19)}Z`) < PENDING_MS;
 
 // ---------- Log parsing ----------
 const SESSION_MARKER = 'Processing game session update: ';
@@ -111,6 +126,10 @@ function applySessionUpdate(s) {
     const me = Object.values(session.players).find(p => p.name === ownName);
     if (me) ownId = me.userId;
   }
+
+  const own = ownId && users && users[ownId];
+  const parsedSquad = own && own.oneVsOne ? manager.squadFrom(own.oneVsOne) : null;
+  if (parsedSquad) { squad = parsedSquad; squadDirty = true; }
 }
 
 // 1v1: Der Spieler bringt einen ganzen Kader mit. Format im Log ist nicht dokumentiert,
@@ -149,7 +168,8 @@ function readLog(initial) {
   let changed = false;
   for (const l of lines) if (handleLine(l)) { changed = true; recordHistory(); recordSeen(); }
   if (historyDirty) { historyDirty = false; saveHistory(); }
-  if (seenDirty) { seenDirty = false; fs.writeFileSync(SEEN_FILE, JSON.stringify(seen)); }
+  if (seenDirty) { seenDirty = false; manager.writeJsonAtomic(SEEN_FILE, seen); }
+  if (squadDirty) { squadDirty = false; manager.writeJsonAtomic(SQUAD_FILE, squad); }
   return changed && !initial;
 }
 
@@ -412,7 +432,7 @@ async function fillResults(force) {
   // Direkt nach Matchende öfter nachsehen, sonst jede Minute.
   const justEnded = session && session.state === 'GAME_SESSION_STATE_POST_GAME_SERVER';
   if (!force && Date.now() - lastResultsFetch < (justEnded ? 15 : 60) * 1000) return;
-  if (!history.some(h => !h.res)) return;
+  if (!(force ? history.some(h => !h.res) : history.some(isPending))) return;
   lastResultsFetch = Date.now();
   try {
     const res = await fetch(`${API}?userId=${ownId}&page=1&pageSize=50`);
@@ -452,10 +472,30 @@ async function refreshMe() {
   } catch { /* offline */ }
 }
 
+// Siegchance-Modell nur neu rechnen, wenn neue Ergebnisse da sind.
+let modelKey = null, model = null;
+function currentWinModel() {
+  const key = history.filter(h => h.res).length;
+  if (key !== modelKey) { modelKey = key; model = manager.winModel(history); }
+  return model;
+}
+
+// Kader-Manager: Matchstats im Hintergrund nachladen, nie während eines laufenden Matches.
+let managerBusy = false;
+async function refreshManager() {
+  resolveOwnId();
+  if (managerBusy || !ownId || !squad) return;
+  if (session && session.state === 'GAME_SESSION_STATE_READY_TO_JOIN_GAME_SERVER') return;
+  managerBusy = true;
+  try { await manager.syncMatchStats({ ownId, squad, file: MATCH_STATS_FILE }); }
+  catch { /* offline – später nochmal */ }
+  finally { managerBusy = false; }
+}
+
 function snapshot() {
   return {
     logPath: LOG_PATH, logFound: fs.existsSync(LOG_PATH),
-    ownName, ownId, me, session, history: history.slice(-100), uiVersion: uiVersion(),
+    ownName, ownId, me, session, history: history.slice(-100), winModel: currentWinModel(), uiVersion: uiVersion(),
   };
 }
 function uiVersion() {
@@ -483,10 +523,17 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify(snapshot()));
   }
-  const urlPath = decodeURIComponent(req.url.split('?')[0]);
+  if (req.url === '/api/manager') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify(manager.analyze(squad, manager.readJson(MATCH_STATS_FILE, { matches: {} }))));
+  }
+  let urlPath;
+  try { urlPath = decodeURIComponent(req.url.split('?')[0]); }
+  catch { res.writeHead(400); return res.end('bad request'); }
   const file = urlPath === '/' ? 'index.html' : urlPath.slice(1);
-  const full = path.join(__dirname, 'public', path.normalize(file));
-  if (!full.startsWith(path.join(__dirname, 'public'))) { res.writeHead(403); return res.end(); }
+  const root = path.join(__dirname, 'public');
+  const full = path.join(root, path.normalize(file));
+  if (!full.startsWith(root + path.sep)) { res.writeHead(403); return res.end(); }
   fs.readFile(full, (err, buf) => {
     if (err) { res.writeHead(404); return res.end('not found'); }
     const type = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' }[path.extname(full)] || 'application/octet-stream';
@@ -504,10 +551,22 @@ for (const f of backups) {
 }
 session = null;
 readLog(true);
+if (squadDirty) { squadDirty = false; manager.writeJsonAtomic(SQUAD_FILE, squad); }
+// Beim Start ist ein beendetes Match aus dem Log schon vorbei → direkt Startseite
+if (session && session.state === 'GAME_SESSION_STATE_POST_GAME_SERVER') session = null;
 enrichSession();
 fillResults(true);
 refreshMe();
+refreshManager();
 setInterval(refreshMe, 60 * 1000);
+setInterval(refreshManager, 10 * 60 * 1000);
+
+// Das Log meldet keine Rückkehr ins Menü, deshalb endet die Nach-dem-Match-Ansicht per Timeout.
+function expirePostGame() {
+  if (!session || session.state !== 'GAME_SESSION_STATE_POST_GAME_SERVER') return;
+  session.postAt ||= Date.now();
+  if (Date.now() - session.postAt > POST_HOLD_MS) { session = null; broadcast(); }
+}
 
 setInterval(() => {
   if (readLog(false)) {
@@ -515,10 +574,11 @@ setInterval(() => {
     enrichSession();
     broadcast();
   }
+  expirePostGame();
   fillResults(false);
 }, 1000);
 
-server.listen(PORT, () => {
+server.listen(PORT, '127.0.0.1', () => {
   console.log(`GOALS Live Scout läuft: http://localhost:${PORT}`);
   console.log(`Log: ${LOG_PATH}${fs.existsSync(LOG_PATH) ? '' : '  (noch nicht gefunden – starte GOALS)'}`);
   if (ownName) console.log(`Spieler: ${ownName}`);
