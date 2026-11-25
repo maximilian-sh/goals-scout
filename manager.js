@@ -390,7 +390,7 @@ function upgradeAdvice(squad, cards5) {
   }
   const order = { Upgraden: 0, Prüfen: 1, '90+': 2, Nein: 3 };
   out.sort((a, b) => order[a.action] - order[b.action] || (b.profit ?? 0) - (a.profit ?? 0));
-  return { cards: out, finished };
+  return { cards: out, finished, asOf: (squad && squad.seenAt) || null };
 }
 
 module.exports = { readJson, writeJsonAtomic, cardFrom, squadFrom, syncMatchStats, analyze, analyze5, winModel, upgradeAdvice };

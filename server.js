@@ -145,7 +145,7 @@ function applySessionUpdate(s) {
 
   const own = ownId && users && users[ownId];
   const parsedSquad = own && own.oneVsOne ? manager.squadFrom(own.oneVsOne) : null;
-  if (parsedSquad) { squad = parsedSquad; squadDirty = true; }
+  if (parsedSquad) { parsedSquad.seenAt = session.createdAt; squad = parsedSquad; squadDirty = true; }
   // 5v5: eigene Karte merken (für Bilanz pro Karte und aktuellen OVR)
   const ownChar = own && own.fiveVsFive && own.fiveVsFive.character;
   if (ownChar && ownChar.id) {

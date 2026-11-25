@@ -559,7 +559,7 @@ function viewUpgrades(d) {
     ${play.length ? `<div class="lbl" style="margin:12px 0 5px">Für 90+ zum Spielen · ${play.length}</div>${play.map(c => `<div class="row" style="border-left-color:#f5c542">${head(c)}<div class="dim" style="font-size:12.5px">${esc(c.reason)}${c.cost ? ' · nächstes kostet ' + n(c.cost) : ''}</div>${c.xpMissing ? `<div class="dim" style="font-size:12px">Noch ${mio(c.xpMissing)} XP bis zum Upgrade</div>` : ''}</div>`).join('')}` : ''}
     ${no.length ? `<div class="card list" style="margin-top:12px"><div class="lbl" style="margin-bottom:4px">Nicht upgraden · ${no.length}</div>
       ${no.map(c => `<div class="li"><span>${esc(c.name)}</span><span class="dim">${c.ovr} → ${c.potLo}–${c.potHi}</span><span class="dim">${c.chanceUp === 0 ? 'Wert bleibt' : 'zu teuer'}</span></div>`).join('')}</div>` : ''}
-    <div class="dim" style="font-size:12px;margin-top:8px">${u.finished} Karten fertig entwickelt. Bekannt sind nur Karten aus deinem 1v1-Kader und deine 5v5-Karte.</div>`;
+    <div class="dim" style="font-size:12px;margin-top:8px">${u.finished} Karten fertig entwickelt. Kartenstand ${u.asOf ? new Date(u.asOf).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'unbekannt'}: GOALS meldet den Kader nur in einer 1v1-Lobby. Nach Upgrades einmal eine 1v1-Lobby öffnen, dann sind die Werte aktuell.</div>`;
 }
 
 function viewIdle(d) {
