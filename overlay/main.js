@@ -1,7 +1,7 @@
 // GOALS Overlay: transparentes, randloses Fenster rechts neben dem 16:9-Spielbild.
 // Klicks gehen durch (keine Interaktion nötig), immer im Vordergrund.
 // Steuerung: Strg+Umschalt+O = ein/aus, Strg+Umschalt+Q = beenden, oder über das Tray-Symbol.
-const { app, BrowserWindow, screen, globalShortcut, Tray, Menu, nativeImage } = require('electron');
+const { app, BrowserWindow, screen, globalShortcut, Tray, Menu, nativeImage, shell } = require('electron');
 const net = require('net');
 const path = require('path');
 const fs = require('fs');
@@ -49,10 +49,10 @@ function createWindow() {
   win.setAlwaysOnTop(true, 'screen-saver'); // auch über randlosem Vollbild
   win.setIgnoreMouseEvents(true);           // Klicks gehen ans Spiel
   win.setVisibleOnAllWorkspaces(true);
-  win.loadURL(`http://localhost:${PORT}/overlay.html?overlay=1`);
+  win.loadURL(`http://127.0.0.1:${PORT}/overlay.html?overlay=1`);
   win.once('ready-to-show', () => { if (gameRunning && !userHidden) win.showInactive(); });
   // Server neu gestartet o. Ä. → nach kurzer Zeit erneut laden
-  win.webContents.on('did-fail-load', () => setTimeout(() => win && win.loadURL(`http://localhost:${PORT}/overlay.html?overlay=1`), 1500));
+  win.webContents.on('did-fail-load', () => setTimeout(() => win && win.loadURL(`http://127.0.0.1:${PORT}/overlay.html?overlay=1`), 1500));
 }
 
 // Manuell ausgeblendet (Hotkey/Tray) bleibt aus, bis GOALS neu gestartet wird.
@@ -94,6 +94,7 @@ function updateTray(status) {
     ...(status ? [{ label: status, enabled: false }] : []),
     { type: 'separator' },
     { label: 'Ein-/Ausblenden (Strg+Umschalt+O)', click: toggle },
+    { label: 'Kader-Manager öffnen', click: () => shell.openExternal(`http://127.0.0.1:${PORT}/manager.html`) },
     { label: 'Nach Updates suchen', click: checkForUpdates, visible: app.isPackaged },
     { label: 'Mit Windows starten', type: 'checkbox', checked: app.getLoginItemSettings().openAtLogin,
       click: item => app.setLoginItemSettings({ openAtLogin: item.checked }), visible: app.isPackaged },
@@ -130,7 +131,7 @@ async function installWhenIdle() {
   if (!pendingUpdate) return;
   if (gameRunning) {
     try {
-      const st = await (await fetch(`http://localhost:${PORT}/api/state`)).json();
+      const st = await (await fetch(`http://127.0.0.1:${PORT}/api/state`)).json();
       if (st.session && st.session.state === 'GAME_SESSION_STATE_READY_TO_JOIN_GAME_SERVER') return;
     } catch {}
   }

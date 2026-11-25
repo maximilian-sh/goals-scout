@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GOALS Kader-Manager</title>
+<style>
+  :root { color-scheme: dark; --bg:#0a0c10; --surface:#12161c; --line:#1f2630; --text:#eef2f6; --text-2:#a3adba; --text-3:#6b7685; --good:#3ddc97; --bad:#ff6b6b; --warn:#e5c07b; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif; font-variant-numeric: tabular-nums; }
+  main { max-width: 1180px; margin: 0 auto; padding: 24px 20px 40px; }
+  h1 { font-size: 24px; margin: 0; } .sub { color: var(--text-3); margin: 3px 0 18px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; margin-bottom: 18px; }
+  .card { background: var(--surface); border-radius: 10px; padding: 12px 14px; }
+  .lbl { color: var(--text-3); font-size: 11px; text-transform: uppercase; letter-spacing: .7px; }
+  .big { font-size: 22px; font-weight: 700; margin-top: 2px; } .small { color: var(--text-2); font-size: 12.5px; margin-top: 2px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .8px; margin: 20px 0 7px; color: var(--text-2); }
+  .wrap { overflow-x: auto; background: var(--surface); border-radius: 10px; }
+  table { width: 100%; border-collapse: collapse; min-width: 900px; }
+  th { color: var(--text-3); font-size: 11px; text-transform: uppercase; letter-spacing: .5px; text-align: right; padding: 9px 10px; border-bottom: 1px solid var(--line); }
+  td { text-align: right; padding: 7px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  tr:last-child td { border-bottom: 0; } th:first-child, td:first-child, .l { text-align: left; }
+  .name { font-weight: 650; } .dim { color: var(--text-3); } .good { color: var(--good); } .bad { color: var(--bad); } .warn { color: var(--warn); }
+  .note { color: var(--text-3); font-size: 12.5px; margin-top: 14px; max-width: 840px; }
+  td.why { white-space: normal; min-width: 230px; text-align: left; }
+  .empty { background: var(--surface); border-radius: 10px; padding: 34px; text-align: center; color: var(--text-2); }
+  .ug { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 8px; }
+  .ug .card { border-left: 3px solid var(--line); padding: 10px 12px; }
+  .ug .card.yes { border-left-color: var(--good); } .ug .card.play { border-left-color: var(--warn); }
+  .uh { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+  .uh .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .uh > span:last-child { flex: none; }
+  .ul { background: var(--surface); border-radius: 10px; padding: 8px 12px; max-width: 600px; }
+  .ul div { display: flex; gap: 10px; padding: 3px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .ul div:last-child { border-bottom: 0; } .ul div span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hint { background: var(--surface); border-radius: 10px; padding: 12px 14px; color: var(--text-2); font-size: 13px; }
+  .err { color: var(--bad); }
+  @media (max-width: 520px) { main { padding: 16px 12px 32px; } .ug { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Kader-Manager</h1>
+  <div class="sub" id="sub">Lädt…</div>
+  <div id="app"></div>
+</main>
+<script>
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const num = v => v == null ? '–' : Number(v).toLocaleString('de-DE');
+const dec = (v, d = 1) => v == null ? '–' : v.toFixed(d);
+const GROUP = { TW: 'Torwart', ABW: 'Abwehr', MIT: 'Mittelfeld', ANG: 'Angriff' };
+const ACTION = { Einsetzen: 'good', Stammelf: 'good', Entwickeln: 'warn', Kader: 'dim', Abgeben: 'bad' };
+const row = p => `<tr>
+  <td><span class="name">${esc(p.name)}</span> <span class="dim">${esc(p.role)}</span></td>
+  <td>${p.ovr ?? '–'}</td><td>${p.age ?? '–'}</td><td>${p.potLo === p.potHi ? (p.potHi ?? '–') : `${p.potLo}–${p.potHi}`}</td>
+  <td class="l">${esc(p.style.label)}${p.style.sure ? '' : ' <span class="dim">(unsicher)</span>'}</td>
+  <td>${p.perf ? p.perf.matches : 0}</td><td>${p.perf ? p.perf.goals : '–'}</td><td>${dec(p.perf?.xg, 2)}</td><td>${dec(p.perf?.tackles90)}</td><td>${dec(p.rating)}</td>
+  <td>${num(p.sell)}</td><td class="l"><b class="${ACTION[p.action]}">${esc(p.action)}</b> <span class="dim">${esc(p.reason)}</span></td>
+</tr>`;
+const table = list => `<div class="wrap"><table><thead><tr><th>Spieler</th><th>OVR</th><th>Alter</th><th>Pot.</th><th class="l">Spielstil</th><th>Sp.</th><th>Tore</th><th>xG</th><th>Tackles/90</th><th>Note</th><th>Wert</th><th class="l">Empfehlung</th></tr></thead><tbody>${list.map(row).join('')}</tbody></table></div>`;
+// ---------- 5v5 ----------
+const ACTION5 = { Hauptkarte: 'good', Zweitkarte: 'good', Talent: 'warn', Kadertiefe: 'dim', Abgebbar: 'bad' };
+const pct = v => v == null ? '–' : `${Math.round(v * 100)} %`;
+const signed = (v, d = 1) => v == null ? '–' : `${v > 0 ? '+' : ''}${v.toFixed(d)}`;
+const tone = v => v == null ? '' : v > 0 ? 'good' : v < 0 ? 'bad' : '';
+const attr = (c, k) => c.attrs && c.attrs[k] != null ? c.attrs[k] : '–';
+const row5 = (c, rec) => {
+  const r = c.record;
+  return `<tr>
+  <td><span class="name">${esc(c.name)}</span> <span class="dim">${esc(c.role)} · ${esc(String(c.tier || '').toLowerCase())}</span></td>
+  <td>${c.ovr ?? '–'}</td><td>${c.age ?? '–'}</td><td>${c.potLo == null ? '–' : c.potLo === c.potHi ? c.potHi : `${c.potLo}–${c.potHi}`}</td>
+  ${['PAC', 'SHO', 'PAS', 'DRI', 'DEF', 'PHY'].map(k => `<td>${attr(c, k)}</td>`).join('')}
+  ${rec ? `<td>${r.games}</td><td>${r.w}–${r.d}–${r.l}</td>
+  <td class="${r.sure ? tone(r.winrate - .5) : 'dim'}">${pct(r.winrate)}</td>
+  <td class="${r.sure ? tone(r.gd) : 'dim'}">${signed(r.gd)}</td>
+  <td class="${r.sure ? tone(r.sr) : 'dim'}">${signed(r.sr, 0)}</td>` : `<td>${num(c.sell)}</td>`}
+  <td class="why"><b class="${ACTION5[c.action]}">${esc(c.action)}</b> <span class="dim">${esc(c.reason)}</span></td>
+</tr>`;
+};
+const table5 = (list, rec) => `<div class="wrap"><table><thead><tr><th>Karte</th><th>OVR</th><th>Alter</th><th>Pot.</th><th>PAC</th><th>SHO</th><th>PAS</th><th>DRI</th><th>DEF</th><th>PHY</th>${rec ? '<th>Sp.</th><th>S–U–N</th><th>Siege</th><th>Tore ±/Sp.</th><th>SR/Sp.</th>' : '<th>Wert</th>'}<th class="l">Empfehlung</th></tr></thead><tbody>${list.map(c => row5(c, rec)).join('')}</tbody></table></div>`;
+function render5(f) {
+  const main = f.cards.find(c => c.id === f.main);
+  const played = f.cards.filter(c => c.record);
+  const rest = f.cards.filter(c => !c.record);
+  const lb = f.lobby;
+  return `
+    <div class="cards">
+      <div class="card"><div class="lbl">Hauptkarte</div><div class="big">${esc(main.name)} · ${main.ovr}</div><div class="small">${main.record ? `${main.record.w}–${main.record.d}–${main.record.l}, ${pct(main.record.winrate)} Siege` : 'Noch keine Matches mit Kartendaten'}</div></div>
+      <div class="card"><div class="lbl">Deine Lobbys</div><div class="big">${lb ? `Ø-Karte ${lb.median}` : '–'}</div><div class="small">${lb ? `${pct(lb.share90)} haben 90+, oberes Viertel ab ${lb.p75}` : 'Noch keine Lobbydaten'}</div></div>
+      <div class="card"><div class="lbl">Lohnt sich als Nächstes</div><div class="big">${f.next.minOvr}+${f.next.group ? ` · ${GROUP[f.next.group]}` : ''}</div><div class="small">${f.next.group ? `Darunter bringt eine neue Karte kaum etwas, ${GROUP[f.next.group]} fehlt dir auf Top-Niveau` : 'Darunter bringt eine neue Karte kaum etwas'}</div></div>
+      <div class="card"><div class="lbl">Top-Talent</div><div class="big">${f.talent ? esc(f.talent.name) : '–'}</div><div class="small">${f.talent ? `${f.talent.ovr} → ${f.talent.potLo}–${f.talent.potHi}, ${f.talent.age} Jahre, XP geben` : `Keiner kann über ${main.ovr} wachsen`}</div></div>
+    </div>
+    <h2>Gespielte Karten · ${played.length}</h2>${table5(played, true)}
+    ${rest.length ? `<h2>Restlicher Kader · ${rest.length}</h2>${table5(rest, false)}` : ''}
+    <div class="note">Im 5v5 spielst du eine Karte pro Match. Bilanz pro Karte aus ${f.withCard} von ${f.matches} 5v5-Matches, ältere Matches haben keine Kartendaten. Unter 10 Spielen ist eine Bilanz grau und nur ein Hinweis. SR/Sp. ist die Veränderung bis zur nächsten Ranked-Lobby. „Abgebbar“ nur, wenn der 1v1-Kader danach noch vollständig ist. Prüfe Werte vor dem Abgeben im Spiel, die App führt selbst nichts aus.</div>`;
+}
+
+// ---------- Upgrades (gleiche Empfehlung wie im Overlay, viewUpgrades) ----------
+const n0 = v => v == null ? '?' : Math.round(v).toLocaleString('de-DE');
+const mio = v => (v / 1e6).toLocaleString('de-DE', { maximumFractionDigits: 1 }) + ' Mio.';
+const potTxt = c => c.potLo == null ? '?' : c.potLo === c.potHi ? c.potHi : `${c.potLo}–${c.potHi}`;
+function renderUpgrades(u) {
+  const title = '<h2 style="margin-top:4px">Upgrades für mehr Verkaufswert</h2>';
+  const hint = 'GOALS meldet den Kader nur in einer 1v1-Lobby. Nach Upgrades einmal eine 1v1-Lobby öffnen, dann sind die Werte hier aktuell.';
+  if (!u || !Array.isArray(u.cards) || !u.cards.length) {
+    return `${title}<div class="hint">${u ? 'Noch keine Kartendaten.' : 'Upgrade-Tipps konnten gerade nicht berechnet werden.'} ${hint}</div>`;
+  }
+  const by = a => u.cards.filter(c => c.action === a);
+  const yes = by('Upgraden'), play = by('90+'), check = by('Prüfen'), no = by('Nein');
+  const head = c => `<div class="uh"><span class="name">${esc(c.name)} <span class="dim">${esc(c.role || '')}</span></span>
+    <span>${c.ovr ?? '?'} <span class="dim">→</span> <b class="${c.reach90 ? 'good' : ''}">${potTxt(c)}</b></span></div>`;
+  const xp = c => c.xpMissing ? `<div class="small dim">Noch ${mio(c.xpMissing)} XP bis zum Upgrade</div>` : c.xpMissing === 0 ? '<div class="small good">XP reichen für das Upgrade</div>' : '';
+  const yesCard = c => `<div class="card yes">${head(c)}
+    <div class="uh small"><span class="dim">${esc(c.reason)} · kostet ${n0(c.cost)}</span><b class="good">+${n0(c.profit)}</b></div>${xp(c)}</div>`;
+  const playCard = c => `<div class="card play">${head(c)}
+    <div class="small dim">${esc(c.reason)}${c.cost ? ' · nächstes kostet ' + n0(c.cost) : ''}</div>${c.xpMissing ? xp(c) : ''}</div>`;
+  const checkCard = c => `<div class="card">${head(c)}<div class="small dim">${esc(c.reason)}</div></div>`;
+  const asOf = u.asOf ? new Date(u.asOf).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) + ' Uhr' : 'unbekannt';
+  return `${title}
+    <div class="sub" style="margin:0 0 8px">Gewinn = erwarteter Verkaufswert danach − Wert jetzt − Upgrade-Kosten. Grüne Spanne heißt: erreicht 90.</div>
+    <h2 style="margin-top:10px">Upgraden · ${yes.length}</h2>
+    ${yes.length ? `<div class="ug">${yes.map(yesCard).join('')}</div>` : '<div class="hint">Gerade lohnt sich kein Upgrade für den Verkauf.</div>'}
+    ${play.length ? `<h2>Für 90+ zum Spielen · ${play.length}</h2><div class="ug">${play.map(playCard).join('')}</div>` : ''}
+    ${check.length ? `<h2>Selbst prüfen · ${check.length}</h2><div class="ug">${check.map(checkCard).join('')}</div>` : ''}
+    ${no.length ? `<h2>Nicht upgraden · ${no.length}</h2><div class="ul">${no.map(c => `<div><span>${esc(c.name)}</span><span class="dim">${c.ovr ?? '?'} → ${potTxt(c)}</span><span class="dim">${c.chanceUp === 0 ? 'Wert bleibt' : 'zu teuer'}</span></div>`).join('')}</div>` : ''}
+    <div class="note">${u.finished || 0} Karten fertig entwickelt. Kartenstand: ${asOf}. ${hint}</div>`;
+}
+
+const SUB = document.getElementById('sub');
+async function load() {
+  const [all, st] = await Promise.all([
+    fetch('/api/manager', { cache: 'no-store' }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }),
+    fetch('/api/state', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null),
+  ]);
+  const up = renderUpgrades(st ? st.upgrades : null);
+  const now = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+  const f = all && all.five, d = all && all.one;
+  const app = document.getElementById('app');
+  if (f) {
+    SUB.textContent = `5v5 · ${f.cards.length} Karten · ${f.matches} Matches · aktualisiert ${now}, alle 30 s`;
+    app.innerHTML = up + '<h1 style="margin-top:34px;font-size:19px">5v5</h1>' + render5(f) + (d && d.players ? `<h1 style="margin-top:34px;font-size:19px">1v1-Kader</h1><div id="one"></div>` : '');
+    if (d && d.players) render1(d, document.getElementById('one'));
+    return;
+  }
+  if (!d || !d.players) {
+    SUB.textContent = `Noch kein Kader gefunden · aktualisiert ${now}`;
+    app.innerHTML = up + '<div class="empty" style="margin-top:18px">Spiele ein Match, dann erscheinen deine Karten hier.</div>';
+    return;
+  }
+  SUB.textContent = `1v1 · aktualisiert ${now}, alle 30 s`;
+  app.innerHTML = up + '<div id="one"></div>';
+  render1(d, document.getElementById('one'));
+}
+function render1(d, el) {
+  const by = a => d.players.filter(p => p.action === a);
+  const release = by('Abgeben').filter(p => p.releaseNow);
+  const dev = by('Entwickeln').sort((a, b) => b.growth - a.growth)[0];
+  el.innerHTML = `<div class="sub">${d.players.length} Spieler · Leistungsdaten aus ${d.matches} 1v1-${d.matches === 1 ? 'Match' : 'Matches'}</div>`;
+  el.innerHTML += `
+    <div class="cards">
+      <div class="card"><div class="lbl">Als Nächstes holen</div><div class="big">${d.buy ? `${esc(d.buy.role)} · ${GROUP[d.buy.group]}` : '–'}</div><div class="small">${d.buy ? `OVR ${d.buy.minOvr}+, bis ${d.buy.maxAge} Jahre, ersetzt ${esc(d.buy.replaces)} (${d.buy.replacesAge})` : ''}</div></div>
+      <div class="card"><div class="lbl">Top-Talent</div><div class="big">${dev ? esc(dev.name) : '–'}</div><div class="small">${dev ? `${dev.ovr} → ${dev.potLo}–${dev.potHi}, ${dev.age} Jahre` : 'Kein junger Spieler mit Potenzial'}</div></div>
+      <div class="card"><div class="lbl">Jetzt abgebbar</div><div class="big">${release.length}</div><div class="small">${release.length ? `bringt ${num(d.releaseValue)} Punkte` : `Kader braucht mindestens ${d.minSquad} Spieler`}</div></div>
+      <div class="card"><div class="lbl">Kaderwert</div><div class="big">${num(d.totalSell)}</div><div class="small">Summe der Abgabewerte</div></div>
+    </div>
+    ${['Einsetzen', 'Stammelf', 'Entwickeln', 'Kader', 'Abgeben'].filter(a => by(a).length).map(a => `<h2>${a} · ${by(a).length}</h2>${table(by(a))}`).join('')}
+    <div class="note">Spielstil und Note stammen nur aus deinen 1v1-Matches. GOALS veröffentlicht für 5v5 keine Einzelstatistiken. Unter 270 Minuten ist die Einschätzung unsicher. Prüfe vor jedem Abgeben den Wert im Spiel, die App führt selbst nichts aus.</div>`;
+}
+let busy = false;
+async function refresh() {
+  if (busy) return;
+  busy = true;
+  const y = window.scrollY;
+  try {
+    await load();
+    window.scrollTo(0, y);
+  } catch {
+    SUB.innerHTML = '<span class="err">Server nicht erreichbar - kader-manager.bat starten</span>';
+  } finally { busy = false; }
+}
+refresh();
+setInterval(refresh, 30000);
+</script>
+</body>
+</html>

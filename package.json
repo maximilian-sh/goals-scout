@@ -8,7 +8,8 @@
     "start": "electron .",
     "server": "node server.js",
     "build": "electron-builder --win --publish never",
-    "release": "node scripts/release.js"
+    "release": "node scripts/release.js",
+    "test": "node --test"
   },
   "devDependencies": {
     "electron": "^44.5.1",
@@ -26,6 +27,7 @@
       "overlay/**",
       "public/**",
       "server.js",
+      "manager.js",
       "package.json"
     ],
     "directories": {

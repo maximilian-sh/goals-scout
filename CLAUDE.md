@@ -18,6 +18,7 @@ overlay/main.js (Electron): transparentes Fenster, startet server.js im selben P
 | `server.js` | Liest `Game.log` (Tail, 1 s), parst Lobbys, holt Spielerdaten von playgoals.com, berechnet Stats, SSE an `/events`, JSON an `/api/state`, statische Dateien aus `public/` |
 | `public/overlay.html` | Das Overlay (eine Datei, Vanilla JS/CSS). Phasen: Lobby → Match läuft → Nach dem Match; eigene 1v1-Ansicht |
 | `public/index.html` | Älteres großes Browser-Dashboard (`start.bat`), weniger gepflegt |
+| `manager.js` / `public/manager.html` | Kader-Manager (Tray → „Kader-Manager öffnen“). **5v5 zuerst** (`analyze5`): eigene Karte pro Match (`history[].card`, aus `participants.users[ownId].fiveVsFive.character`), Karten-OVR der Lobby (`history[].lobbyOvrs`), aktueller Kartenstand in `data/cards5v5.json`; zeigt Bilanz/SR pro Karte, Lobby-Niveau, nächste lohnende Karte, Talente. Darunter 1v1 (`analyze`): Kader aus dem Log, öffentliche 1v1-Matchstats (`playerMetrics`, `playerRatings`), Stammelf/Entwickeln/Abgeben. Nur lesend |
 | `overlay/main.js` | Electron-Hauptprozess: Fenster rechts am Bildschirmrand, klick-durchlässig, immer oben, Tray, Hotkeys, Auto-Updater. Läuft unsichtbar im Tray (Autostart mit Windows) und zeigt das Overlay nur, solange `Goals.exe` läuft (`checkGame()`, alle 3 s) |
 | `scripts/release.js` | Version bumpen, Installer bauen, als Release ins private GitHub-Repo laden |
 | `build/` | App-Icons für den Installer |
@@ -32,6 +33,7 @@ overlay/main.js (Electron): transparentes Fenster, startet server.js im selben P
      - `lobbyState.oneVsOne.home/away` → einzelner Spieler (Format aus API abgeleitet, im Log noch nicht live gesehen!)
      - `participants.users[id]` → `username.goals`, Steam-ID, `fiveVsFive.character` (OVR, Rolle, Tier, Attribute); bei 1v1 vermutlich `oneVsOne` mit Kader
    - `OwningPlayerName: <name>` → eigener Spielername.
+   - `LogUIActionRouter: ... Applying input config for leaf-most node [WBP_X_C_123]` → aktiver Menü-Bildschirm. Kader/Sammlung/Upgrade (`SQUAD_SCREENS` in `server.js`) → Overlay zeigt Upgrade-Tipps (`viewUpgrades`, Test: `?phase=squad`). Die ganze Sammlung steht **nicht** im Log, nur der 1v1-Kader und die 5v5-Karte.
    - ⚠️ Enthält `gameServerConnection.userToken` – **niemals anzeigen, loggen oder speichern.**
    - Kein Live-Spielstand pro Team im Log (nur `GoalScoredActivated`-Audio-Events ohne Seite).
 2. **`https://playgoals.com/api/game-sessions?userId=<uuid>&page=N&pageSize=50`** (max. 50/Seite, nur beendete Matches, kein CORS → nur serverseitig).
@@ -47,6 +49,7 @@ Was es **nicht** gibt: individuelle 5v5-Matchstats (Tore/Pässe pro Spieler). `p
 - **Tracker Score 0–1000** (`trackerScore()` in `overlay.html`): bewertet den **Menschen**, nicht die Spielerkarte. Gewichte: SR 25 %, Winrate 25 %, Tordifferenz 15 %, xG/Match 15 %, Form L10 10 %, Erfahrung 5 %, Mercy-Bilanz 5 %. Kleine Stichproben werden Richtung Durchschnitt gezogen (Bayes-Shrinkage); < 10 Spiele = blass/„unsicher“.
 - **Party-Erkennung** (`detectParties()` in `server.js`): Spieler im selben Lobby-Team mit ≥ 3 gemeinsamen Matches in ihrer Historie.
 - **Siegchance**: Elo-Formel aus Ø-SR der Teams.
+- **Verkaufswert** = Stufe der unteren Potenzial-Grenze (<60: 100, 60: 250, 70: 650, 80: 3.000, 85: 25.000, 90: 250.000, 95: 2.000.000). **Upgrade-Kosten** nach OVR vor dem Upgrade (`upgradeCost()` in `manager.js`, im Spiel gemessen, ab 90 unbekannt). XP pro Schritt je Stufe: 0,5 / 1,5 / 2,5 / 4 / 5,5 / 7,5 Mio. `upgradeAdvice()` empfiehlt Upgrades, die den erwarteten Verkaufswert stärker erhöhen als sie kosten.
 
 ## Design-Regeln fürs Overlay (vom Nutzer so gewollt)
 - **Keine Interaktion nötig** – kein Aufklappen, keine Buttons, keine Tooltips als einzige Infoquelle. Fenster ist klick-durchlässig.
@@ -69,6 +72,11 @@ npm run server           # nur Server; Dashboard unter http://localhost:7777, Ov
   Fake-Log braucht eine Zeile `OwningPlayerName: <name>` und eine `Processing game session update: {...}`-Zeile (siehe Format oben).
 - **Phase erzwingen:** `http://localhost:7777/overlay.html?phase=lobby|live|post` (plus `&overlay=1` für transparenten Modus).
 - Umgebungsvariablen: `PORT`, `GOALS_LOG`, `GOALS_NAME`, `GOALS_DATA_DIR`, `OVERLAY_WIDTH`, `OVERLAY_TOP`.
+
+## Start aus dem Git-Klon (Freunde, ohne Installer)
+- `overlay.bat` → `scripts/launch.js`: prüft, ob die App schon läuft (Port belegt → kein Update), `git pull --ff-only` ohne Passwortabfrage mit 30 s Timeout, `npm install` wenn `package-lock.json` sich seit der letzten erfolgreichen Installation geändert hat (Hash in `node_modules/.goals-lock-hash`), lädt `electron.exe` nach, falls npm Installationsskripte blockiert, startet Electron.
+- `kader-manager.bat` → `launch.js --no-overlay`: nur Update + `node server.js` im Fenster + Kader-Manager im Browser (für 16:9-Bildschirme, auf denen das Overlay stört). `public/manager.html` zeigt dafür auch die Upgrade-Tipps und lädt alle 30 s neu.
+- Was auf dem verfolgten Branch landet, läuft beim Freund beim nächsten Start. Vorher `npm test` (node:test, keine Abhängigkeiten: `test/manager.test.js`, `test/server.e2e.test.js` auf Port 7798).
 
 ## Release (Auto-Update)
 - `npm run release` (oder `npm run release minor`) → bumpt Version, pusht Commit + Tag, baut NSIS-Installer (`--publish never`) und legt mit `gh release create` ein Release in **maximilian-sh/goals-scout** (privat) an. (electron-builders eigener Upload erzeugte doppelte Releases → nicht verwenden.)

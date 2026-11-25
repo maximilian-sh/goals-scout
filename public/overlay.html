@@ -279,6 +279,12 @@ function teams(s, d) {
   };
 }
 
+// Elo, angepasst an die eigenen Ranked-5v5-Ergebnisse, wenn das im Backtest besser war.
+function winChance(mySr, oppSr) {
+  const d = (mySr - oppSr) / 400 * Math.LN10, m = last && last.winModel;
+  return 1 / (1 + Math.exp(-(m && m.use ? m.a + m.b * d : d)));
+}
+
 function matchup(mine, opp, full) {
   const T = l => ({
     sr: avg(l.map(p => p.skillRating)),
@@ -290,7 +296,7 @@ function matchup(mine, opp, full) {
     hrs: avg(l.map(p => p.scout?.profile?.hours)),
   });
   const a = T(mine), b = T(opp);
-  const odds = a.sr != null && b.sr != null ? 1 / (1 + Math.pow(10, (b.sr - a.sr) / 400)) : null;
+  const odds = a.sr != null && b.sr != null ? winChance(a.sr, b.sr) : null;
   const oc = odds == null ? '' : odds >= .52 ? 'good' : odds <= .48 ? 'bad' : '';
   const r = (label, x, y, fmt) => {
     const xw = x != null && y != null && x > y, yw = x != null && y != null && y > x;
@@ -361,7 +367,7 @@ function viewPost(s, d) {
   const same = x => x.format === s.format && x.mode === s.mode;
   const label = `${(s.mode || '').includes('RANKED') ? 'Ranked' : 'Quick Play'} ${(s.format || '').includes('FIVE') ? '5v5' : '1v1'}`;
   const day = new Date(); day.setHours(0, 0, 0, 0);
-  const today = h.filter(x => same(x) && x.at && new Date(x.at) >= day);
+  const today = h.filter(x => same(x) && x.res && x.at && new Date(x.at) >= day);
   const w = today.filter(x => x.res === 'W').length, l = today.filter(x => x.res === 'L').length, dr = today.filter(x => x.res === 'D').length;
   const srStart = today[0]?.sr, srNow = today[today.length - 1]?.sr;
   const last = [...h].filter(same).reverse().slice(0, 6);
@@ -461,7 +467,7 @@ function viewHome(d) {
 
   // Heute (alle Ranked-Matches, nach Modus getrennt zusammengefasst)
   const day = new Date(); day.setHours(0, 0, 0, 0);
-  const todayOf = list => list.filter(x => x.at && new Date(x.at) >= day);
+  const todayOf = list => list.filter(x => x.res && x.at && new Date(x.at) >= day);
   const t5 = todayOf(r5), t1 = todayOf(r1);
   const wl = l => ({ w: l.filter(x => x.res === 'W').length, l: l.filter(x => x.res === 'L').length, d: l.filter(x => x.res === 'D').length });
   const todayRow = (label, l) => {
@@ -527,6 +533,35 @@ function viewHome(d) {
     </div>` : ''}`;
 }
 
+// Kader-Menü im Spiel offen: welche Upgrades den Verkaufswert erhöhen
+function viewUpgrades(d) {
+  const u = d.upgrades || { cards: [], finished: 0 };
+  const n = v => v == null ? '?' : Math.round(v).toLocaleString('de-DE');
+  const mio = v => (v / 1e6).toLocaleString('de-DE', { maximumFractionDigits: 1 }) + ' Mio.';
+  const yes = u.cards.filter(c => c.action === 'Upgraden');
+  const check = u.cards.filter(c => c.action === 'Prüfen');
+  const no = u.cards.filter(c => c.action === 'Nein');
+  const play = u.cards.filter(c => c.action === '90+');
+  const head = c => `<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline">
+      <span style="font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.name)} <span class="dim">${esc(c.role || '')}</span></span>
+      <span style="flex:none">${c.ovr} <span class="dim">→</span> <b class="${c.reach90 ? 'good' : ''}">${c.potLo}–${c.potHi}</b></span></div>`;
+  const good = c => `<div class="row" style="border-left-color:var(--good)">${head(c)}
+      <div style="display:flex;justify-content:space-between;gap:8px;font-size:12.5px;margin-top:2px">
+        <span class="dim">${esc(c.reason)} · kostet ${n(c.cost)}</span><b class="good" style="flex:none">+${n(c.profit)}</b></div>
+      ${c.xpMissing ? `<div class="dim" style="font-size:12px">Noch ${mio(c.xpMissing)} XP bis zum Upgrade</div>` : ''}</div>`;
+  return `
+    <div class="card">
+      <div class="lbl">Upgrade für mehr Verkaufswert</div>
+      <div style="font-size:12.5px;margin-top:2px" class="dim">Gewinn = erwarteter Verkaufswert danach − Wert jetzt − Upgrade-Kosten. Grüne Spanne = erreicht 90.</div>
+    </div>
+    ${yes.length ? `<div class="lbl" style="margin:0 0 5px">Upgraden · ${yes.length}</div>${yes.map(good).join('')}` : '<div class="card dim">Gerade lohnt sich kein Upgrade für den Verkauf.</div>'}
+    ${check.length ? `<div class="lbl" style="margin:12px 0 5px">Selbst prüfen · ${check.length}</div>${check.map(c => `<div class="row">${head(c)}<div class="dim" style="font-size:12.5px">${esc(c.reason)}</div></div>`).join('')}` : ''}
+    ${play.length ? `<div class="lbl" style="margin:12px 0 5px">Für 90+ zum Spielen · ${play.length}</div>${play.map(c => `<div class="row" style="border-left-color:#f5c542">${head(c)}<div class="dim" style="font-size:12.5px">${esc(c.reason)}${c.cost ? ' · nächstes kostet ' + n(c.cost) : ''}</div>${c.xpMissing ? `<div class="dim" style="font-size:12px">Noch ${mio(c.xpMissing)} XP bis zum Upgrade</div>` : ''}</div>`).join('')}` : ''}
+    ${no.length ? `<div class="card list" style="margin-top:12px"><div class="lbl" style="margin-bottom:4px">Nicht upgraden · ${no.length}</div>
+      ${no.map(c => `<div class="li"><span>${esc(c.name)}</span><span class="dim">${c.ovr} → ${c.potLo}–${c.potHi}</span><span class="dim">${c.chanceUp === 0 ? 'Wert bleibt' : 'zu teuer'}</span></div>`).join('')}</div>` : ''}
+    <div class="dim" style="font-size:12px;margin-top:8px">${u.finished} Karten fertig entwickelt. Kartenstand ${u.asOf ? new Date(u.asOf).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'unbekannt'}: GOALS meldet den Kader nur in einer 1v1-Lobby. Nach Upgrades einmal eine 1v1-Lobby öffnen, dann sind die Werte aktuell.</div>`;
+}
+
 function viewIdle(d) {
   if (!d.logFound) return `<div class="empty">Game.log nicht gefunden – starte GOALS.</div>`;
   return viewHome(d);
@@ -539,6 +574,13 @@ function render(d) {
   const s = d.session;
   $('me').textContent = d.ownName || '';
   const scrollY = window.scrollY;
+  const forced = new URLSearchParams(location.search).get('phase');
+  const inMatch = s && s.state === 'GAME_SESSION_STATE_READY_TO_JOIN_GAME_SERVER';
+  if (forced === 'squad' || (!forced && d.inSquad && !inMatch)) {
+    $('dot').className = 'dot'; $('state').textContent = 'Kader'; $('info').textContent = '';
+    $('main').innerHTML = viewUpgrades(d);
+    return;
+  }
   if (!d.logFound || !s || !s.home.length) {
     $('dot').className = 'dot'; $('state').textContent = d.logFound ? 'Im Menü' : 'GOALS nicht gestartet'; $('info').textContent = '';
     $('main').innerHTML = viewIdle(d);
