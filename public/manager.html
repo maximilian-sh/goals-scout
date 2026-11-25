@@ -22,6 +22,7 @@
   tr:last-child td { border-bottom: 0; } th:first-child, td:first-child, .l { text-align: left; }
   .name { font-weight: 650; } .dim { color: var(--text-3); } .good { color: var(--good); } .bad { color: var(--bad); } .warn { color: var(--warn); }
   .note { color: var(--text-3); font-size: 12.5px; margin-top: 14px; max-width: 840px; }
+  td.why { white-space: normal; min-width: 230px; text-align: left; }
   .empty { background: var(--surface); border-radius: 10px; padding: 34px; text-align: center; color: var(--text-2); }
 </style>
 </head>
@@ -45,18 +46,66 @@ const row = p => `<tr>
   <td>${num(p.sell)}</td><td class="l"><b class="${ACTION[p.action]}">${esc(p.action)}</b> <span class="dim">${esc(p.reason)}</span></td>
 </tr>`;
 const table = list => `<div class="wrap"><table><thead><tr><th>Spieler</th><th>OVR</th><th>Alter</th><th>Pot.</th><th class="l">Spielstil</th><th>Sp.</th><th>Tore</th><th>xG</th><th>Tackles/90</th><th>Note</th><th>Wert</th><th class="l">Empfehlung</th></tr></thead><tbody>${list.map(row).join('')}</tbody></table></div>`;
+// ---------- 5v5 ----------
+const ACTION5 = { Hauptkarte: 'good', Zweitkarte: 'good', Talent: 'warn', Kadertiefe: 'dim', Abgebbar: 'bad' };
+const pct = v => v == null ? '–' : `${Math.round(v * 100)} %`;
+const signed = (v, d = 1) => v == null ? '–' : `${v > 0 ? '+' : ''}${v.toFixed(d)}`;
+const tone = v => v == null ? '' : v > 0 ? 'good' : v < 0 ? 'bad' : '';
+const attr = (c, k) => c.attrs && c.attrs[k] != null ? c.attrs[k] : '–';
+const row5 = (c, rec) => {
+  const r = c.record;
+  return `<tr>
+  <td><span class="name">${esc(c.name)}</span> <span class="dim">${esc(c.role)} · ${esc(String(c.tier || '').toLowerCase())}</span></td>
+  <td>${c.ovr ?? '–'}</td><td>${c.age ?? '–'}</td><td>${c.potLo == null ? '–' : c.potLo === c.potHi ? c.potHi : `${c.potLo}–${c.potHi}`}</td>
+  ${['PAC', 'SHO', 'PAS', 'DRI', 'DEF', 'PHY'].map(k => `<td>${attr(c, k)}</td>`).join('')}
+  ${rec ? `<td>${r.games}</td><td>${r.w}–${r.d}–${r.l}</td>
+  <td class="${r.sure ? tone(r.winrate - .5) : 'dim'}">${pct(r.winrate)}</td>
+  <td class="${r.sure ? tone(r.gd) : 'dim'}">${signed(r.gd)}</td>
+  <td class="${r.sure ? tone(r.sr) : 'dim'}">${signed(r.sr, 0)}</td>` : `<td>${num(c.sell)}</td>`}
+  <td class="why"><b class="${ACTION5[c.action]}">${esc(c.action)}</b> <span class="dim">${esc(c.reason)}</span></td>
+</tr>`;
+};
+const table5 = (list, rec) => `<div class="wrap"><table><thead><tr><th>Karte</th><th>OVR</th><th>Alter</th><th>Pot.</th><th>PAC</th><th>SHO</th><th>PAS</th><th>DRI</th><th>DEF</th><th>PHY</th>${rec ? '<th>Sp.</th><th>S–U–N</th><th>Siege</th><th>Tore ±/Sp.</th><th>SR/Sp.</th>' : '<th>Wert</th>'}<th class="l">Empfehlung</th></tr></thead><tbody>${list.map(c => row5(c, rec)).join('')}</tbody></table></div>`;
+function render5(f) {
+  const main = f.cards.find(c => c.id === f.main);
+  const played = f.cards.filter(c => c.record);
+  const rest = f.cards.filter(c => !c.record);
+  const lb = f.lobby;
+  return `
+    <div class="cards">
+      <div class="card"><div class="lbl">Hauptkarte</div><div class="big">${esc(main.name)} · ${main.ovr}</div><div class="small">${main.record ? `${main.record.w}–${main.record.d}–${main.record.l}, ${pct(main.record.winrate)} Siege` : 'Noch keine Matches mit Kartendaten'}</div></div>
+      <div class="card"><div class="lbl">Deine Lobbys</div><div class="big">${lb ? `Ø-Karte ${lb.median}` : '–'}</div><div class="small">${lb ? `${pct(lb.share90)} haben 90+, oberes Viertel ab ${lb.p75}` : 'Noch keine Lobbydaten'}</div></div>
+      <div class="card"><div class="lbl">Lohnt sich als Nächstes</div><div class="big">${f.next.minOvr}+${f.next.group ? ` · ${GROUP[f.next.group]}` : ''}</div><div class="small">${f.next.group ? `Darunter bringt eine neue Karte kaum etwas, ${GROUP[f.next.group]} fehlt dir auf Top-Niveau` : 'Darunter bringt eine neue Karte kaum etwas'}</div></div>
+      <div class="card"><div class="lbl">Top-Talent</div><div class="big">${f.talent ? esc(f.talent.name) : '–'}</div><div class="small">${f.talent ? `${f.talent.ovr} → ${f.talent.potLo}–${f.talent.potHi}, ${f.talent.age} Jahre, XP geben` : `Keiner kann über ${main.ovr} wachsen`}</div></div>
+    </div>
+    <h2>Gespielte Karten · ${played.length}</h2>${table5(played, true)}
+    ${rest.length ? `<h2>Restlicher Kader · ${rest.length}</h2>${table5(rest, false)}` : ''}
+    <div class="note">Im 5v5 spielst du eine Karte pro Match. Bilanz pro Karte aus ${f.withCard} von ${f.matches} 5v5-Matches, ältere Matches haben keine Kartendaten. Unter 10 Spielen ist eine Bilanz grau und nur ein Hinweis. SR/Sp. ist die Veränderung bis zur nächsten Ranked-Lobby. „Abgebbar“ nur, wenn der 1v1-Kader danach noch vollständig ist. Prüfe Werte vor dem Abgeben im Spiel, die App führt selbst nichts aus.</div>`;
+}
+
 async function load() {
-  const d = await (await fetch('/api/manager')).json();
-  if (!d || !d.players) {
-    document.getElementById('sub').textContent = 'Noch kein Kader gefunden';
-    document.getElementById('app').innerHTML = '<div class="empty">Spiele ein 1v1-Match oder öffne eine 1v1-Lobby, dann erscheint dein Kader hier.</div>';
+  const all = await (await fetch('/api/manager')).json();
+  const f = all && all.five, d = all && all.one;
+  if (f) {
+    document.getElementById('sub').textContent = `5v5 · ${f.cards.length} Karten · ${f.matches} Matches`;
+    document.getElementById('app').innerHTML = render5(f) + (d && d.players ? `<h1 style="margin-top:34px;font-size:19px">1v1-Kader</h1><div id="one"></div>` : '');
+    if (d && d.players) render1(d, document.getElementById('one'));
     return;
   }
+  if (!d || !d.players) {
+    document.getElementById('sub').textContent = 'Noch kein Kader gefunden';
+    document.getElementById('app').innerHTML = '<div class="empty">Spiele ein Match, dann erscheinen deine Karten hier.</div>';
+    return;
+  }
+  document.getElementById('sub').textContent = '1v1';
+  render1(d, document.getElementById('app'));
+}
+function render1(d, el) {
   const by = a => d.players.filter(p => p.action === a);
   const release = by('Abgeben').filter(p => p.releaseNow);
   const dev = by('Entwickeln').sort((a, b) => b.growth - a.growth)[0];
-  document.getElementById('sub').textContent = `${d.players.length} Spieler · Leistungsdaten aus ${d.matches} 1v1-${d.matches === 1 ? 'Match' : 'Matches'}`;
-  document.getElementById('app').innerHTML = `
+  el.innerHTML = `<div class="sub">${d.players.length} Spieler · Leistungsdaten aus ${d.matches} 1v1-${d.matches === 1 ? 'Match' : 'Matches'}</div>`;
+  el.innerHTML += `
     <div class="cards">
       <div class="card"><div class="lbl">Als Nächstes holen</div><div class="big">${d.buy ? `${esc(d.buy.role)} · ${GROUP[d.buy.group]}` : '–'}</div><div class="small">${d.buy ? `OVR ${d.buy.minOvr}+, bis ${d.buy.maxAge} Jahre, ersetzt ${esc(d.buy.replaces)} (${d.buy.replacesAge})` : ''}</div></div>
       <div class="card"><div class="lbl">Top-Talent</div><div class="big">${dev ? esc(dev.name) : '–'}</div><div class="small">${dev ? `${dev.ovr} → ${dev.potLo}–${dev.potHi}, ${dev.age} Jahre` : 'Kein junger Spieler mit Potenzial'}</div></div>

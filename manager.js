@@ -259,4 +259,85 @@ function winModel(history) {
   return { use: model < elo, n: rows.length, a, b, brierModel: model / rows.length, brierElo: elo / rows.length };
 }
 
-module.exports = { readJson, writeJsonAtomic, squadFrom, syncMatchStats, analyze, winModel };
+// ---------- 5v5: eine Karte pro Match, also zählt die beste Karte ----------
+// Quelle: eigene Karte und Karten-OVR aller anderen aus den Lobbys im Game.log, Ergebnis aus history.json.
+const FIVE = 'GAME_FORMAT_FIVE_VS_FIVE';
+const MIN_CARD_GAMES = 10; // darunter ist die Bilanz einer Karte nur ein Hinweis
+const GROUP_NAMES = { TW: 'Torwart', ABW: 'die Abwehr', MIT: 'das Mittelfeld', ANG: 'den Angriff' };
+const quantile = (xs, q) => {
+  if (!xs.length) return null;
+  const s = [...xs].sort((a, b) => a - b), i = (s.length - 1) * q, lo = Math.floor(i);
+  return s[lo] + (s[Math.min(lo + 1, s.length - 1)] - s[lo]) * (i - lo);
+};
+function analyze5(history, cards5, squad, oneVsOne) {
+  const five = (history || []).filter(h => h.format === FIVE).sort((a, b) => String(a.at).localeCompare(String(b.at)));
+  // SR-Veränderung pro Match: SR der nächsten Ranked-Lobby minus SR dieser Lobby
+  const ranked = five.filter(h => h.mode === 'GAME_MODE_RANKED' && h.sr != null);
+  const srDelta = new Map();
+  ranked.forEach((h, i) => { if (ranked[i + 1] && h.res) srDelta.set(h.id, ranked[i + 1].sr - h.sr); });
+
+  // Alle bekannten Karten: 1v1-Kader, überschrieben vom frischeren 5v5-Stand
+  const all = new Map();
+  for (const c of (squad && squad.cards) || []) all.set(c.id, { ...c });
+  for (const c of Object.values(cards5 || {})) all.set(c.id, { ...all.get(c.id), ...c });
+
+  const stat = new Map();
+  for (const h of five) {
+    if (!h.card || !h.res) continue;
+    const s = stat.get(h.card.id) || { games: 0, w: 0, d: 0, l: 0, gf: 0, ga: 0, sr: 0, srGames: 0 };
+    s.games++; s[h.res.toLowerCase()]++; s.gf += h.gf || 0; s.ga += h.ga || 0;
+    if (srDelta.has(h.id)) { s.sr += srDelta.get(h.id); s.srGames++; }
+    stat.set(h.card.id, s);
+    if (!all.has(h.card.id)) all.set(h.card.id, { ...h.card });
+  }
+  if (!all.size) return null;
+
+  // Lobby-Niveau aus den letzten 30 5v5-Matches mit Kartendaten
+  const lobbyOvrs = five.filter(h => h.lobbyOvrs && h.lobbyOvrs.length).slice(-30).flatMap(h => h.lobbyOvrs);
+  const lobby = lobbyOvrs.length ? {
+    n: lobbyOvrs.length, median: Math.round(quantile(lobbyOvrs, .5)), p75: Math.round(quantile(lobbyOvrs, .75)),
+    share90: lobbyOvrs.filter(o => o >= 90).length / lobbyOvrs.length,
+  } : null;
+
+  const cards = [...all.values()].map(c => {
+    const s = stat.get(c.id);
+    return { ...c, group: GROUPS[c.role] || 'MIT', record: s ? {
+      games: s.games, w: s.w, d: s.d, l: s.l, winrate: s.w / s.games, gd: (s.gf - s.ga) / s.games,
+      sr: s.srGames ? s.sr / s.srGames : null, sure: s.games >= MIN_CARD_GAMES,
+    } : null };
+  });
+  // Hauptkarte: am häufigsten in den letzten 20 Matches gespielt
+  const recent = {};
+  for (const h of five.filter(x => x.card).slice(-20)) recent[h.card.id] = (recent[h.card.id] || 0) + 1;
+  const byUse = cards.filter(c => recent[c.id]).sort((a, b) => recent[b.id] - recent[a.id] || b.ovr - a.ovr);
+  const main = byUse[0] || [...cards].sort((a, b) => (b.ovr || 0) - (a.ovr || 0))[0];
+  const games = c => (c.record ? c.record.games : 0);
+  const second = cards.filter(c => c.id !== main.id && c.ovr >= main.ovr - 2).sort((a, b) => games(b) - games(a) || b.ovr - a.ovr)[0] || null;
+
+  // Die 1v1-Auswertung weiß, wer im 1v1-Kader entbehrlich ist, ohne unter die Mindestgröße zu fallen
+  const releasable = new Set(((oneVsOne && oneVsOne.players) || []).filter(p => p.action === 'Abgeben' && p.releaseNow).map(p => p.id));
+  for (const c of cards) {
+    const canPass = c.potHi != null && c.potHi > main.ovr && c.age != null && c.age <= 23;
+    if (c.id === main.id) { c.action = 'Hauptkarte'; c.reason = 'Spielst du am meisten'; }
+    else if (second && c.id === second.id) { c.action = 'Zweitkarte'; c.reason = `${c.ovr} OVR, deckt ${GROUP_NAMES[c.group]} ab`; }
+    else if (canPass) { c.action = 'Talent'; c.reason = `Kann bis ${c.potHi} wachsen, also über deine ${main.ovr}`; }
+    else if (releasable.has(c.id)) { c.action = 'Abgebbar'; c.reason = `Spielt nie, bringt ${c.sell ?? '?'} Punkte`; }
+    else { c.action = 'Kadertiefe'; c.reason = c.ovr != null && c.ovr >= main.ovr - 3 ? 'Ersatz auf gleichem Niveau' : `${main.ovr - (c.ovr || 0)} OVR unter der Hauptkarte`; }
+  }
+  // Nächste Karte: über dem oberen Viertel deiner Lobbys und mindestens 2 über der Hauptkarte
+  const strong = cards.filter(c => c.ovr != null && c.ovr >= main.ovr - 3);
+  const missing = ['ABW', 'MIT', 'ANG'].filter(g => !strong.some(c => c.group === g));
+  const minOvr = Math.max(main.ovr + 2, lobby ? lobby.p75 + 1 : 0);
+  const order = { Hauptkarte: 0, Zweitkarte: 1, Talent: 2, Kadertiefe: 3, Abgebbar: 4 };
+  cards.sort((a, b) => order[a.action] - order[b.action] || games(b) - games(a) || (b.ovr || 0) - (a.ovr || 0));
+  const done = five.filter(h => h.res);
+  return {
+    main: main.id, lobby, cards,
+    matches: done.length, withCard: done.filter(h => h.card).length,
+    next: { minOvr, group: missing[0] || null },
+    talent: cards.find(c => c.action === 'Talent') || null,
+    releaseValue: cards.filter(c => c.action === 'Abgebbar').reduce((x, c) => x + (c.sell || 0), 0),
+  };
+}
+
+module.exports = { readJson, writeJsonAtomic, cardFrom, squadFrom, syncMatchStats, analyze, analyze5, winModel };

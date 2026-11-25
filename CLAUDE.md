@@ -18,7 +18,7 @@ overlay/main.js (Electron): transparentes Fenster, startet server.js im selben P
 | `server.js` | Liest `Game.log` (Tail, 1 s), parst Lobbys, holt Spielerdaten von playgoals.com, berechnet Stats, SSE an `/events`, JSON an `/api/state`, statische Dateien aus `public/` |
 | `public/overlay.html` | Das Overlay (eine Datei, Vanilla JS/CSS). Phasen: Lobby → Match läuft → Nach dem Match; eigene 1v1-Ansicht |
 | `public/index.html` | Älteres großes Browser-Dashboard (`start.bat`), weniger gepflegt |
-| `manager.js` / `public/manager.html` | Kader-Manager (Tray → „Kader-Manager öffnen“): liest den eigenen 1v1-Kader aus dem Log, lädt öffentliche 1v1-Matchstats (`playerMetrics`, `playerRatings`) und empfiehlt Stammelf, Entwickeln, Abgeben und Kaufprofil. Nur lesend, 5v5 hat öffentlich keine Einzelstats |
+| `manager.js` / `public/manager.html` | Kader-Manager (Tray → „Kader-Manager öffnen“). **5v5 zuerst** (`analyze5`): eigene Karte pro Match (`history[].card`, aus `participants.users[ownId].fiveVsFive.character`), Karten-OVR der Lobby (`history[].lobbyOvrs`), aktueller Kartenstand in `data/cards5v5.json`; zeigt Bilanz/SR pro Karte, Lobby-Niveau, nächste lohnende Karte, Talente. Darunter 1v1 (`analyze`): Kader aus dem Log, öffentliche 1v1-Matchstats (`playerMetrics`, `playerRatings`), Stammelf/Entwickeln/Abgeben. Nur lesend |
 | `overlay/main.js` | Electron-Hauptprozess: Fenster rechts am Bildschirmrand, klick-durchlässig, immer oben, Tray, Hotkeys, Auto-Updater. Läuft unsichtbar im Tray (Autostart mit Windows) und zeigt das Overlay nur, solange `Goals.exe` läuft (`checkGame()`, alle 3 s) |
 | `scripts/release.js` | Version bumpen, Installer bauen, als Release ins private GitHub-Repo laden |
 | `build/` | App-Icons für den Installer |

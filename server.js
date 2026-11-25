@@ -30,6 +30,9 @@ const POST_HOLD_MS = 3 * 60 * 1000; // so lange bleibt die Nach-dem-Match-Ansich
 const PENDING_MS = 6 * 3600 * 1000; // ältere Lobbys ohne Ergebnis wurden nie gespielt
 let squad = manager.readJson(SQUAD_FILE, null);
 let squadDirty = false;
+const CARDS5_FILE = path.join(DATA_DIR, 'cards5v5.json');
+let cards5 = manager.readJson(CARDS5_FILE, {});
+let cards5Dirty = false;
 
 function loadHistory() {
   let raw;
@@ -130,6 +133,17 @@ function applySessionUpdate(s) {
   const own = ownId && users && users[ownId];
   const parsedSquad = own && own.oneVsOne ? manager.squadFrom(own.oneVsOne) : null;
   if (parsedSquad) { squad = parsedSquad; squadDirty = true; }
+  // 5v5: eigene Karte merken (für Bilanz pro Karte und aktuellen OVR)
+  const ownChar = own && own.fiveVsFive && own.fiveVsFive.character;
+  if (ownChar && ownChar.id) {
+    const card = manager.cardFrom(ownChar);
+    session.ownCard = { id: card.id, name: card.name, ovr: card.ovr, role: card.role, tier: card.tier };
+    const prev = cards5[card.id];
+    if (!prev || String(prev.seenAt) <= String(session.createdAt)) {
+      const next = { ...card, seenAt: session.createdAt };
+      if (JSON.stringify(prev) !== JSON.stringify(next)) { cards5[card.id] = next; cards5Dirty = true; }
+    }
+  }
 }
 
 // 1v1: Der Spieler bringt einen ganzen Kader mit. Format im Log ist nicht dokumentiert,
@@ -170,6 +184,7 @@ function readLog(initial) {
   if (historyDirty) { historyDirty = false; saveHistory(); }
   if (seenDirty) { seenDirty = false; manager.writeJsonAtomic(SEEN_FILE, seen); }
   if (squadDirty) { squadDirty = false; manager.writeJsonAtomic(SQUAD_FILE, squad); }
+  if (cards5Dirty) { cards5Dirty = false; manager.writeJsonAtomic(CARDS5_FILE, cards5); }
   return changed && !initial;
 }
 
@@ -421,6 +436,10 @@ function recordHistory() {
     sr: me.skillRating, rank: me.rank, teamAvg: avg(myTeam), oppAvg: avg(opp),
     isHome: myTeam === session.home,
   });
+  if (session.ownCard) h.card = session.ownCard;
+  const others = [...session.home, ...session.away].filter(id => id !== ownId)
+    .map(id => session.players[id].character && session.players[id].character.ovr).filter(o => typeof o === 'number');
+  if (others.length) h.lobbyOvrs = others;
   history = history.slice(-500);
   historyDirty = true;
 }
@@ -525,7 +544,8 @@ const server = http.createServer((req, res) => {
   }
   if (req.url === '/api/manager') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify(manager.analyze(squad, manager.readJson(MATCH_STATS_FILE, { matches: {} }))));
+    const one = manager.analyze(squad, manager.readJson(MATCH_STATS_FILE, { matches: {} }));
+    return res.end(JSON.stringify({ five: manager.analyze5(history, cards5, squad, one), one }));
   }
   let urlPath;
   try { urlPath = decodeURIComponent(req.url.split('?')[0]); }
