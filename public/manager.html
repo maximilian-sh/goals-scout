@@ -24,6 +24,17 @@
   .note { color: var(--text-3); font-size: 12.5px; margin-top: 14px; max-width: 840px; }
   td.why { white-space: normal; min-width: 230px; text-align: left; }
   .empty { background: var(--surface); border-radius: 10px; padding: 34px; text-align: center; color: var(--text-2); }
+  .ug { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 8px; }
+  .ug .card { border-left: 3px solid var(--line); padding: 10px 12px; }
+  .ug .card.yes { border-left-color: var(--good); } .ug .card.play { border-left-color: var(--warn); }
+  .uh { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+  .uh .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .uh > span:last-child { flex: none; }
+  .ul { background: var(--surface); border-radius: 10px; padding: 8px 12px; max-width: 600px; }
+  .ul div { display: flex; gap: 10px; padding: 3px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .ul div:last-child { border-bottom: 0; } .ul div span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hint { background: var(--surface); border-radius: 10px; padding: 12px 14px; color: var(--text-2); font-size: 13px; }
+  .err { color: var(--bad); }
+  @media (max-width: 520px) { main { padding: 16px 12px 32px; } .ug { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
@@ -83,22 +94,61 @@ function render5(f) {
     <div class="note">Im 5v5 spielst du eine Karte pro Match. Bilanz pro Karte aus ${f.withCard} von ${f.matches} 5v5-Matches, ältere Matches haben keine Kartendaten. Unter 10 Spielen ist eine Bilanz grau und nur ein Hinweis. SR/Sp. ist die Veränderung bis zur nächsten Ranked-Lobby. „Abgebbar“ nur, wenn der 1v1-Kader danach noch vollständig ist. Prüfe Werte vor dem Abgeben im Spiel, die App führt selbst nichts aus.</div>`;
 }
 
+// ---------- Upgrades (gleiche Empfehlung wie im Overlay, viewUpgrades) ----------
+const n0 = v => v == null ? '?' : Math.round(v).toLocaleString('de-DE');
+const mio = v => (v / 1e6).toLocaleString('de-DE', { maximumFractionDigits: 1 }) + ' Mio.';
+const potTxt = c => c.potLo == null ? '?' : c.potLo === c.potHi ? c.potHi : `${c.potLo}–${c.potHi}`;
+function renderUpgrades(u) {
+  const title = '<h2 style="margin-top:4px">Upgrades für mehr Verkaufswert</h2>';
+  const hint = 'GOALS meldet den Kader nur in einer 1v1-Lobby. Nach Upgrades einmal eine 1v1-Lobby öffnen, dann sind die Werte hier aktuell.';
+  if (!u || !Array.isArray(u.cards) || !u.cards.length) {
+    return `${title}<div class="hint">${u ? 'Noch keine Kartendaten.' : 'Upgrade-Tipps konnten gerade nicht berechnet werden.'} ${hint}</div>`;
+  }
+  const by = a => u.cards.filter(c => c.action === a);
+  const yes = by('Upgraden'), play = by('90+'), check = by('Prüfen'), no = by('Nein');
+  const head = c => `<div class="uh"><span class="name">${esc(c.name)} <span class="dim">${esc(c.role || '')}</span></span>
+    <span>${c.ovr ?? '?'} <span class="dim">→</span> <b class="${c.reach90 ? 'good' : ''}">${potTxt(c)}</b></span></div>`;
+  const xp = c => c.xpMissing ? `<div class="small dim">Noch ${mio(c.xpMissing)} XP bis zum Upgrade</div>` : c.xpMissing === 0 ? '<div class="small good">XP reichen für das Upgrade</div>' : '';
+  const yesCard = c => `<div class="card yes">${head(c)}
+    <div class="uh small"><span class="dim">${esc(c.reason)} · kostet ${n0(c.cost)}</span><b class="good">+${n0(c.profit)}</b></div>${xp(c)}</div>`;
+  const playCard = c => `<div class="card play">${head(c)}
+    <div class="small dim">${esc(c.reason)}${c.cost ? ' · nächstes kostet ' + n0(c.cost) : ''}</div>${c.xpMissing ? xp(c) : ''}</div>`;
+  const checkCard = c => `<div class="card">${head(c)}<div class="small dim">${esc(c.reason)}</div></div>`;
+  const asOf = u.asOf ? new Date(u.asOf).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) + ' Uhr' : 'unbekannt';
+  return `${title}
+    <div class="sub" style="margin:0 0 8px">Gewinn = erwarteter Verkaufswert danach − Wert jetzt − Upgrade-Kosten. Grüne Spanne heißt: erreicht 90.</div>
+    <h2 style="margin-top:10px">Upgraden · ${yes.length}</h2>
+    ${yes.length ? `<div class="ug">${yes.map(yesCard).join('')}</div>` : '<div class="hint">Gerade lohnt sich kein Upgrade für den Verkauf.</div>'}
+    ${play.length ? `<h2>Für 90+ zum Spielen · ${play.length}</h2><div class="ug">${play.map(playCard).join('')}</div>` : ''}
+    ${check.length ? `<h2>Selbst prüfen · ${check.length}</h2><div class="ug">${check.map(checkCard).join('')}</div>` : ''}
+    ${no.length ? `<h2>Nicht upgraden · ${no.length}</h2><div class="ul">${no.map(c => `<div><span>${esc(c.name)}</span><span class="dim">${c.ovr ?? '?'} → ${potTxt(c)}</span><span class="dim">${c.chanceUp === 0 ? 'Wert bleibt' : 'zu teuer'}</span></div>`).join('')}</div>` : ''}
+    <div class="note">${u.finished || 0} Karten fertig entwickelt. Kartenstand: ${asOf}. ${hint}</div>`;
+}
+
+const SUB = document.getElementById('sub');
 async function load() {
-  const all = await (await fetch('/api/manager')).json();
+  const [all, st] = await Promise.all([
+    fetch('/api/manager', { cache: 'no-store' }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }),
+    fetch('/api/state', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null),
+  ]);
+  const up = renderUpgrades(st ? st.upgrades : null);
+  const now = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
   const f = all && all.five, d = all && all.one;
+  const app = document.getElementById('app');
   if (f) {
-    document.getElementById('sub').textContent = `5v5 · ${f.cards.length} Karten · ${f.matches} Matches`;
-    document.getElementById('app').innerHTML = render5(f) + (d && d.players ? `<h1 style="margin-top:34px;font-size:19px">1v1-Kader</h1><div id="one"></div>` : '');
+    SUB.textContent = `5v5 · ${f.cards.length} Karten · ${f.matches} Matches · aktualisiert ${now}, alle 30 s`;
+    app.innerHTML = up + '<h1 style="margin-top:34px;font-size:19px">5v5</h1>' + render5(f) + (d && d.players ? `<h1 style="margin-top:34px;font-size:19px">1v1-Kader</h1><div id="one"></div>` : '');
     if (d && d.players) render1(d, document.getElementById('one'));
     return;
   }
   if (!d || !d.players) {
-    document.getElementById('sub').textContent = 'Noch kein Kader gefunden';
-    document.getElementById('app').innerHTML = '<div class="empty">Spiele ein Match, dann erscheinen deine Karten hier.</div>';
+    SUB.textContent = `Noch kein Kader gefunden · aktualisiert ${now}`;
+    app.innerHTML = up + '<div class="empty" style="margin-top:18px">Spiele ein Match, dann erscheinen deine Karten hier.</div>';
     return;
   }
-  document.getElementById('sub').textContent = '1v1';
-  render1(d, document.getElementById('app'));
+  SUB.textContent = `1v1 · aktualisiert ${now}, alle 30 s`;
+  app.innerHTML = up + '<div id="one"></div>';
+  render1(d, document.getElementById('one'));
 }
 function render1(d, el) {
   const by = a => d.players.filter(p => p.action === a);
@@ -115,7 +165,20 @@ function render1(d, el) {
     ${['Einsetzen', 'Stammelf', 'Entwickeln', 'Kader', 'Abgeben'].filter(a => by(a).length).map(a => `<h2>${a} · ${by(a).length}</h2>${table(by(a))}`).join('')}
     <div class="note">Spielstil und Note stammen nur aus deinen 1v1-Matches. GOALS veröffentlicht für 5v5 keine Einzelstatistiken. Unter 270 Minuten ist die Einschätzung unsicher. Prüfe vor jedem Abgeben den Wert im Spiel, die App führt selbst nichts aus.</div>`;
 }
-load().catch(() => { document.getElementById('sub').textContent = 'Server nicht erreichbar'; });
+let busy = false;
+async function refresh() {
+  if (busy) return;
+  busy = true;
+  const y = window.scrollY;
+  try {
+    await load();
+    window.scrollTo(0, y);
+  } catch {
+    SUB.innerHTML = '<span class="err">Server nicht erreichbar - kader-manager.bat starten</span>';
+  } finally { busy = false; }
+}
+refresh();
+setInterval(refresh, 30000);
 </script>
 </body>
 </html>

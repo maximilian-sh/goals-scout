@@ -19,6 +19,19 @@ function writeJsonAtomic(file, value, indent) {
   fs.writeFileSync(tmp, JSON.stringify(value, null, indent));
   fs.renameSync(tmp, file);
 }
+// Wie writeJsonAtomic, wirft aber nie: unter Windows kann renameSync durch OneDrive/Virenscanner
+// mit EPERM scheitern. Gibt false zurück (Aufrufer versucht es später nochmal), warnt einmal pro Datei.
+const saveFailing = new Set();
+function saveJson(file, value, indent) {
+  try {
+    writeJsonAtomic(file, value, indent);
+    saveFailing.delete(file);
+    return true;
+  } catch (e) {
+    if (!saveFailing.has(file)) { saveFailing.add(file); console.warn(`Speichern fehlgeschlagen (${path.basename(file)}): ${e.code || e.message}, versuche es erneut`); }
+    return false;
+  }
+}
 
 // ---------- Kader aus dem Game.log (nur benötigte Felder, kein Seed, keine Tokens) ----------
 const strip = (v, prefix) => String(v || '').replace(prefix, '');
@@ -364,6 +377,7 @@ function upgradeAdvice(squad, cards5) {
   let finished = 0;
   for (const c of all.values()) {
     if (c.potLo == null || c.potHi == null || c.ovr == null) continue;
+    if (c.potLo > c.potHi) continue; // unstimmige Daten, keine sinnvolle Spanne
     const left = c.steps != null ? c.steps - c.stepsDone : (c.potLo < c.potHi ? null : 0);
     if (left === 0) { finished++; continue; }
     // Letztes Upgrade: End-OVR irgendwo in der Spanne. Sonst: untere Grenze steigt um 0, 1 oder 2.
@@ -393,4 +407,4 @@ function upgradeAdvice(squad, cards5) {
   return { cards: out, finished, asOf: (squad && squad.seenAt) || null };
 }
 
-module.exports = { readJson, writeJsonAtomic, cardFrom, squadFrom, syncMatchStats, analyze, analyze5, winModel, upgradeAdvice };
+module.exports = { readJson, writeJsonAtomic, saveJson, sellValue, upgradeCost, cardFrom, squadFrom, syncMatchStats, analyze, analyze5, winModel, upgradeAdvice };

@@ -73,6 +73,11 @@ npm run server           # nur Server; Dashboard unter http://localhost:7777, Ov
 - **Phase erzwingen:** `http://localhost:7777/overlay.html?phase=lobby|live|post` (plus `&overlay=1` für transparenten Modus).
 - Umgebungsvariablen: `PORT`, `GOALS_LOG`, `GOALS_NAME`, `GOALS_DATA_DIR`, `OVERLAY_WIDTH`, `OVERLAY_TOP`.
 
+## Start aus dem Git-Klon (Freunde, ohne Installer)
+- `overlay.bat` → `scripts/launch.js`: prüft, ob die App schon läuft (Port belegt → kein Update), `git pull --ff-only` ohne Passwortabfrage mit 30 s Timeout, `npm install` wenn `package-lock.json` sich seit der letzten erfolgreichen Installation geändert hat (Hash in `node_modules/.goals-lock-hash`), lädt `electron.exe` nach, falls npm Installationsskripte blockiert, startet Electron.
+- `kader-manager.bat` → `launch.js --no-overlay`: nur Update + `node server.js` im Fenster + Kader-Manager im Browser (für 16:9-Bildschirme, auf denen das Overlay stört). `public/manager.html` zeigt dafür auch die Upgrade-Tipps und lädt alle 30 s neu.
+- Was auf dem verfolgten Branch landet, läuft beim Freund beim nächsten Start. Vorher `npm test` (node:test, keine Abhängigkeiten: `test/manager.test.js`, `test/server.e2e.test.js` auf Port 7798).
+
 ## Release (Auto-Update)
 - `npm run release` (oder `npm run release minor`) → bumpt Version, pusht Commit + Tag, baut NSIS-Installer (`--publish never`) und legt mit `gh release create` ein Release in **maximilian-sh/goals-scout** (privat) an. (electron-builders eigener Upload erzeugte doppelte Releases → nicht verwenden.)
 - Installierte Apps prüfen beim Start und alle 10 min, laden im Hintergrund und installieren **nie während eines laufenden Matches** (`installWhenIdle`).

@@ -4,6 +4,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { StringDecoder } = require('string_decoder');
 const manager = require('./manager');
 
 const PORT = Number(process.env.PORT) || 7777;
@@ -33,18 +34,38 @@ let squadDirty = false;
 const CARDS5_FILE = path.join(DATA_DIR, 'cards5v5.json');
 let cards5 = manager.readJson(CARDS5_FILE, {});
 let cards5Dirty = false;
+let cards5Version = 0; // zählt Änderungen an cards5 (Cache für Upgrade-Tipps)
 
 function loadHistory() {
   let raw;
   try { raw = fs.readFileSync(HISTORY_FILE, 'utf8'); } catch { return []; }
-  try { return JSON.parse(raw); } catch {
+  try {
+    const list = JSON.parse(raw);
+    // Ältere Versionen haben Backup-Matches hinten angehängt → chronologisch sortieren
+    return Array.isArray(list) ? list.sort((a, b) => String(a.at || '').localeCompare(String(b.at || ''))) : [];
+  } catch {
     // Kaputte Datei nicht beim nächsten Speichern überschreiben
     fs.copyFileSync(HISTORY_FILE, `${HISTORY_FILE}.corrupt-${Date.now()}`);
     return [];
   }
 }
 function saveHistory() {
-  manager.writeJsonAtomic(HISTORY_FILE, history, 1);
+  return manager.saveJson(HISTORY_FILE, history, 1);
+}
+// Geänderte Dateien speichern. Scheitert ein Speichern, bleibt das Flag gesetzt → nächster Tick versucht es erneut.
+function flushDirty() {
+  if (historyDirty) historyDirty = !saveHistory();
+  if (seenDirty) seenDirty = !manager.saveJson(SEEN_FILE, seen);
+  if (squadDirty) squadDirty = !manager.saveJson(SQUAD_FILE, squad);
+  if (cards5Dirty) cards5Dirty = !manager.saveJson(CARDS5_FILE, cards5);
+}
+// Auswertungen dürfen nie Broadcasts oder Requests abbrechen: Fehler → null, einmal pro Teil loggen.
+const failedOnce = new Set();
+function safe(name, fn) {
+  try { return fn(); } catch (e) {
+    if (!failedOnce.has(name)) { failedOnce.add(name); console.warn(`${name} fehlgeschlagen: ${e && e.message}`); }
+    return null;
+  }
 }
 const isPending = h => !h.res && h.at && Date.now() - Date.parse(`${String(h.at).slice(0, 19)}Z`) < PENDING_MS;
 
@@ -154,7 +175,7 @@ function applySessionUpdate(s) {
     const prev = cards5[card.id];
     if (!prev || String(prev.seenAt) <= String(session.createdAt)) {
       const next = { ...card, seenAt: session.createdAt };
-      if (JSON.stringify(prev) !== JSON.stringify(next)) { cards5[card.id] = next; cards5Dirty = true; }
+      if (JSON.stringify(prev) !== JSON.stringify(next)) { cards5[card.id] = next; cards5Dirty = true; cards5Version++; }
     }
   }
 }
@@ -178,27 +199,25 @@ function squadSummary(obj) {
 // Liest neue Bytes am Dateiende; erkennt Neustart des Spiels (Datei wird kleiner).
 let offset = 0;
 let partial = '';
+// Hält unvollständige UTF-8-Zeichen (z. B. Umlaute) zwischen zwei Lesevorgängen zurück
+let decoder = new StringDecoder('utf8');
 function readLog(initial) {
   let stat;
   try { stat = fs.statSync(LOG_PATH); } catch { return false; }
   // Neues Log = Spiel neu gestartet → alte Lobby verwerfen
-  if (stat.size < offset) { offset = 0; partial = ''; session = null; inSquad = false; if (!initial) broadcast(); }
+  if (stat.size < offset) { offset = 0; partial = ''; decoder = new StringDecoder('utf8'); session = null; inSquad = false; if (!initial) broadcast(); }
   if (stat.size === offset) return false;
   const fd = fs.openSync(LOG_PATH, 'r');
   const buf = Buffer.alloc(stat.size - offset);
   fs.readSync(fd, buf, 0, buf.length, offset);
   fs.closeSync(fd);
   offset = stat.size;
-  const text = partial + buf.toString('utf8');
+  const text = partial + decoder.write(buf);
   const lines = text.split(/\r?\n/);
   partial = lines.pop();
   let changed = false;
   for (const l of lines) if (handleLine(l)) { changed = true; recordHistory(); recordSeen(); }
   if (screenChanged) { screenChanged = false; changed = true; }
-  if (historyDirty) { historyDirty = false; saveHistory(); }
-  if (seenDirty) { seenDirty = false; manager.writeJsonAtomic(SEEN_FILE, seen); }
-  if (squadDirty) { squadDirty = false; manager.writeJsonAtomic(SQUAD_FILE, squad); }
-  if (cards5Dirty) { cards5Dirty = false; manager.writeJsonAtomic(CARDS5_FILE, cards5); }
   return changed && !initial;
 }
 
@@ -392,7 +411,17 @@ function detectParties() {
 // Spieler aus früheren Lobbys merken (SR-Verlauf auch für Gegner/Mitspieler).
 const SEEN_FILE = path.join(DATA_DIR, 'players.json');
 let seen = {};
-try { seen = JSON.parse(fs.readFileSync(SEEN_FILE, 'utf8')); } catch {}
+{
+  let raw = null;
+  try { raw = fs.readFileSync(SEEN_FILE, 'utf8'); } catch { /* noch keine Datei */ }
+  if (raw != null) {
+    try { seen = JSON.parse(raw) || {}; } catch {
+      // Kaputte Datei nicht beim nächsten Speichern überschreiben (wie loadHistory)
+      try { fs.copyFileSync(SEEN_FILE, `${SEEN_FILE}.corrupt-${Date.now()}`); } catch {}
+      seen = {};
+    }
+  }
+}
 let seenDirty = false;
 function recordSeen() {
   if (!session || !session.home.length) return;
@@ -444,7 +473,11 @@ function recordHistory() {
   const opp = myTeam === session.home ? session.away : session.home;
   const avg = ids => Math.round(ids.reduce((a, id) => a + (session.players[id].skillRating || 0), 0) / (ids.length || 1));
   let h = history.find(x => x.id === session.id);
-  if (!h) { h = { id: session.id }; history.push(h); }
+  if (!h) {
+    // Beim Einlesen alter Backup-Logs: schon herausgekürzte Matches nicht wieder anhängen
+    if (history.length >= HISTORY_MAX && byAt(session.createdAt) < byAt(history[0].at)) return;
+    h = { id: session.id }; history.push(h);
+  }
   Object.assign(h, {
     at: session.createdAt, mode: session.mode, format: session.format,
     sr: me.skillRating, rank: me.rank, teamAvg: avg(myTeam), oppAvg: avg(opp),
@@ -454,10 +487,14 @@ function recordHistory() {
   const others = [...session.home, ...session.away].filter(id => id !== ownId)
     .map(id => session.players[id].character && session.players[id].character.ovr).filter(o => typeof o === 'number');
   if (others.length) h.lobbyOvrs = others;
-  history = history.slice(-500);
+  // Chronologisch halten, dann die ältesten Einträge kürzen
+  history.sort((a, b) => byAt(a.at).localeCompare(byAt(b.at)));
+  history = history.slice(-HISTORY_MAX);
   historyDirty = true;
 }
 let historyDirty = false;
+const HISTORY_MAX = 500;
+const byAt = at => String(at || '');
 
 let lastResultsFetch = 0;
 async function fillResults(force) {
@@ -483,7 +520,7 @@ async function fillResults(force) {
       h.res = f.match_result === 'MATCH_RESULT_DRAW' ? 'D' : (f.match_result === 'MATCH_RESULT_HOME_WIN') === h.isHome ? 'W' : 'L';
       changed = true;
     }
-    if (changed) { saveHistory(); broadcast(); }
+    if (changed) { historyDirty = !saveHistory(); broadcast(); }
   } catch { /* offline – später nochmal */ }
 }
 
@@ -508,8 +545,10 @@ async function refreshMe() {
 // Siegchance-Modell nur neu rechnen, wenn neue Ergebnisse da sind.
 let modelKey = null, model = null;
 function currentWinModel() {
-  const key = history.filter(h => h.res).length;
-  if (key !== modelKey) { modelKey = key; model = manager.winModel(history); }
+  // Schlüssel: Anzahl Ergebnisse + letztes Ergebnis (ändert sich auch beim Kürzen auf 500)
+  const done = history.filter(h => h.res);
+  const key = `${done.length}:${done.length ? done[done.length - 1].id : ''}`;
+  if (key !== modelKey) { modelKey = key; model = safe('winModel', () => manager.winModel(history)); }
   return model;
 }
 
@@ -525,11 +564,20 @@ async function refreshManager() {
   finally { managerBusy = false; }
 }
 
+// Upgrade-Tipps nur neu rechnen, wenn sich Kader oder 5v5-Karten ändern.
+let adviceSquad, adviceVersion = -1, advice = null;
+function currentAdvice() {
+  if (squad !== adviceSquad || cards5Version !== adviceVersion) {
+    adviceSquad = squad; adviceVersion = cards5Version;
+    advice = safe('upgradeAdvice', () => manager.upgradeAdvice(squad, cards5));
+  }
+  return advice;
+}
 function snapshot() {
   return {
     logPath: LOG_PATH, logFound: fs.existsSync(LOG_PATH),
     ownName, ownId, me, session, history: history.slice(-100), winModel: currentWinModel(), uiVersion: uiVersion(),
-    inSquad, upgrades: manager.upgradeAdvice(squad, cards5),
+    inSquad, upgrades: currentAdvice(),
   };
 }
 function uiVersion() {
@@ -559,8 +607,8 @@ const server = http.createServer((req, res) => {
   }
   if (req.url === '/api/manager') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    const one = manager.analyze(squad, manager.readJson(MATCH_STATS_FILE, { matches: {} }));
-    return res.end(JSON.stringify({ five: manager.analyze5(history, cards5, squad, one), one }));
+    const one = safe('analyze', () => manager.analyze(squad, manager.readJson(MATCH_STATS_FILE, { matches: {} })));
+    return res.end(JSON.stringify({ five: safe('analyze5', () => manager.analyze5(history, cards5, squad, one)), one }));
   }
   let urlPath;
   try { urlPath = decodeURIComponent(req.url.split('?')[0]); }
@@ -587,7 +635,7 @@ for (const f of backups) {
 session = null;
 inSquad = false;
 readLog(true);
-if (squadDirty) { squadDirty = false; manager.writeJsonAtomic(SQUAD_FILE, squad); }
+flushDirty();
 // Beim Start ist ein beendetes Match aus dem Log schon vorbei → direkt Startseite
 if (session && session.state === 'GAME_SESSION_STATE_POST_GAME_SERVER') session = null;
 enrichSession();
@@ -610,6 +658,7 @@ setInterval(() => {
     enrichSession();
     broadcast();
   }
+  flushDirty();
   expirePostGame();
   fillResults(false);
 }, 1000);
