@@ -33,6 +33,7 @@ overlay/main.js (Electron): transparentes Fenster, startet server.js im selben P
      - `lobbyState.oneVsOne.home/away` → einzelner Spieler (Format aus API abgeleitet, im Log noch nicht live gesehen!)
      - `participants.users[id]` → `username.goals`, Steam-ID, `fiveVsFive.character` (OVR, Rolle, Tier, Attribute); bei 1v1 vermutlich `oneVsOne` mit Kader
    - `OwningPlayerName: <name>` → eigener Spielername.
+   - `LogUIActionRouter: ... Applying input config for leaf-most node [WBP_X_C_123]` → aktiver Menü-Bildschirm. Kader/Sammlung/Upgrade (`SQUAD_SCREENS` in `server.js`) → Overlay zeigt Upgrade-Tipps (`viewUpgrades`, Test: `?phase=squad`). Die ganze Sammlung steht **nicht** im Log, nur der 1v1-Kader und die 5v5-Karte.
    - ⚠️ Enthält `gameServerConnection.userToken` – **niemals anzeigen, loggen oder speichern.**
    - Kein Live-Spielstand pro Team im Log (nur `GoalScoredActivated`-Audio-Events ohne Seite).
 2. **`https://playgoals.com/api/game-sessions?userId=<uuid>&page=N&pageSize=50`** (max. 50/Seite, nur beendete Matches, kein CORS → nur serverseitig).
@@ -48,6 +49,7 @@ Was es **nicht** gibt: individuelle 5v5-Matchstats (Tore/Pässe pro Spieler). `p
 - **Tracker Score 0–1000** (`trackerScore()` in `overlay.html`): bewertet den **Menschen**, nicht die Spielerkarte. Gewichte: SR 25 %, Winrate 25 %, Tordifferenz 15 %, xG/Match 15 %, Form L10 10 %, Erfahrung 5 %, Mercy-Bilanz 5 %. Kleine Stichproben werden Richtung Durchschnitt gezogen (Bayes-Shrinkage); < 10 Spiele = blass/„unsicher“.
 - **Party-Erkennung** (`detectParties()` in `server.js`): Spieler im selben Lobby-Team mit ≥ 3 gemeinsamen Matches in ihrer Historie.
 - **Siegchance**: Elo-Formel aus Ø-SR der Teams.
+- **Verkaufswert** = Stufe der unteren Potenzial-Grenze (<60: 100, 60: 250, 70: 650, 80: 3.000, 85: 25.000, 90: 250.000, 95: 2.000.000). **Upgrade-Kosten** nach OVR vor dem Upgrade (`upgradeCost()` in `manager.js`, im Spiel gemessen, ab 90 unbekannt). XP pro Schritt je Stufe: 0,5 / 1,5 / 2,5 / 4 / 5,5 / 7,5 Mio. `upgradeAdvice()` empfiehlt Upgrades, die den erwarteten Verkaufswert stärker erhöhen als sie kosten.
 
 ## Design-Regeln fürs Overlay (vom Nutzer so gewollt)
 - **Keine Interaktion nötig** – kein Aufklappen, keine Buttons, keine Tooltips als einzige Infoquelle. Fenster ist klick-durchlässig.

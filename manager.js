@@ -35,6 +35,7 @@ function cardFrom(c) {
     potHi: c.maxPotentialRatingRange && c.maxPotentialRatingRange.upperBound,
     xp: c.currentXp, nextXp: next && next < 4294967295 ? next : null,
     sell: c.discardValue && c.discardValue.points,
+    steps: c.totalUpgradeSteps ?? null, stepsDone: c.completedUpgradeSteps || 0,
     attrs: { PAC: w('pace'), SHO: w('shooting'), PAS: w('passing'), DRI: w('dribbling'), DEF: w('defending'), PHY: w('physicality'), GK: w('goalkeeping') },
   };
 }
@@ -340,4 +341,56 @@ function analyze5(history, cards5, squad, oneVsOne) {
   };
 }
 
-module.exports = { readJson, writeJsonAtomic, cardFrom, squadFrom, syncMatchStats, analyze, analyze5, winModel };
+// ---------- Upgrade-Empfehlung für mehr Verkaufswert ----------
+// Verkaufswert = Stufe der unteren Potenzial-Grenze (stimmt bei 674 von 701 Karten aus den Logs).
+// Upgrade-Kosten nach OVR vor dem Upgrade, von Leo im Spiel gemessen; ab 90 OVR unbekannt.
+const SELL = [[95, 2000000], [90, 250000], [85, 25000], [80, 3000], [70, 650], [60, 250], [0, 100]];
+const sellValue = low => SELL.find(([from]) => low >= from)[1];
+function upgradeCost(o) {
+  if (o == null) return null;
+  if (o < 40) return 100;
+  if (o <= 59) return 100 + 10 * (o - 40);
+  if (o <= 69) return Math.round((300 + 56.25 * (o - 60)) / 50) * 50; // nur 60 und 68 gemessen
+  if (o <= 79) return 1000 + 500 * (o - 70);
+  if (o <= 84) return 7500 + 2500 * (o - 80);
+  if (o <= 89) return 25000 + 7500 * (o - 85);
+  return null;
+}
+function upgradeAdvice(squad, cards5) {
+  const all = new Map();
+  for (const c of (squad && squad.cards) || []) all.set(c.id, c);
+  for (const c of Object.values(cards5 || {})) all.set(c.id, { ...all.get(c.id), ...c });
+  const out = [];
+  let finished = 0;
+  for (const c of all.values()) {
+    if (c.potLo == null || c.potHi == null || c.ovr == null) continue;
+    const left = c.steps != null ? c.steps - c.stepsDone : (c.potLo < c.potHi ? null : 0);
+    if (left === 0) { finished++; continue; }
+    // Letztes Upgrade: End-OVR irgendwo in der Spanne. Sonst: untere Grenze steigt um 0, 1 oder 2.
+    const outcomes = left === 1
+      ? Array.from({ length: c.potHi - c.potLo + 1 }, (_, i) => c.potLo + i)
+      : [0, 1, 2].map(d => Math.min(c.potLo + d, c.potHi));
+    const now = sellValue(c.potLo);
+    const ev = outcomes.reduce((s, l) => s + sellValue(l), 0) / outcomes.length;
+    const chanceUp = outcomes.filter(l => sellValue(l) > now).length / outcomes.length;
+    const cost = upgradeCost(c.ovr);
+    const profit = cost == null ? null : ev - now - cost;
+    const xpMissing = c.nextXp != null && c.xp != null ? Math.max(0, c.nextXp - c.xp) : null;
+    let action, reason;
+    if (chanceUp === 0) { action = 'Nein'; reason = `Bleibt bei ${now.toLocaleString('de-DE')}, egal wie es ausgeht`; }
+    else if (profit == null) { action = 'Prüfen'; reason = 'Kosten ab 90 OVR noch unbekannt'; }
+    else if (profit > 0) { action = 'Upgraden'; reason = `${Math.round(chanceUp * 100)} % Chance auf ${sellValue(Math.max(...outcomes)).toLocaleString('de-DE')}`; }
+    else { action = 'Nein'; reason = 'Kostet mehr, als es im Schnitt bringt'; }
+    // Ziel 90+: lohnt sich nicht für den Verkauf, aber die Karte kann (oder wird) eine 90er zum Spielen
+    if (action === 'Nein' && c.potHi >= 90) {
+      action = '90+';
+      reason = c.potLo >= 90 ? 'Wird sicher 90+, Verkaufswert steigt nicht mehr' : `Kann bis ${c.potHi} wachsen, lohnt sich über ${left ?? 'mehrere'} Upgrades`;
+    }
+    out.push({ id: c.id, name: c.name, role: c.role, ovr: c.ovr, potLo: c.potLo, potHi: c.potHi, left, now, ev, cost, profit, chanceUp, xpMissing, reach90: c.potHi >= 90, action, reason });
+  }
+  const order = { Upgraden: 0, Prüfen: 1, '90+': 2, Nein: 3 };
+  out.sort((a, b) => order[a.action] - order[b.action] || (b.profit ?? 0) - (a.profit ?? 0));
+  return { cards: out, finished };
+}
+
+module.exports = { readJson, writeJsonAtomic, cardFrom, squadFrom, syncMatchStats, analyze, analyze5, winModel, upgradeAdvice };

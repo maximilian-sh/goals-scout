@@ -50,10 +50,23 @@ const isPending = h => !h.res && h.at && Date.now() - Date.parse(`${String(h.at)
 
 // ---------- Log parsing ----------
 const SESSION_MARKER = 'Processing game session update: ';
+const SQUAD_SCREENS = new Set(['WBP_SquadManagementScreen', 'SquadWidget', 'BenchCollectionWidget', 'WBP_CollectionList', 'Collection',
+  'CollectionWidget', 'WBP_CharacterUpgradeScreen', 'WBP_PlayerDetials3dScreen', 'WBP_SwapContentScreen', 'WBP_SwapCollectionWidget']);
+const NEUTRAL_SCREENS = new Set(['RadialMenu', 'ScrollableList']); // kommen in vielen Menüs vor, ändern nichts
+let inSquad = false, screenChanged = false;
 
 function handleLine(line) {
   const owner = line.match(/OwningPlayerName: (\S+)/);
   if (owner && !process.env.GOALS_NAME) ownName = owner[1];
+
+  // Aktiver Bildschirm im Spielmenü: Kader, Sammlung oder Upgrade → Upgrade-Tipps im Overlay
+  const screen = line.match(/Applying input config for leaf-most node \[(\w+?)_C_\d+\]/);
+  if (screen) {
+    const name = screen[1];
+    const next = SQUAD_SCREENS.has(name) ? true : NEUTRAL_SCREENS.has(name) ? inSquad : false;
+    if (next !== inSquad) { inSquad = next; screenChanged = true; }
+    return false;
+  }
 
   const i = line.indexOf(SESSION_MARKER);
   if (i === -1) return false;
@@ -169,7 +182,7 @@ function readLog(initial) {
   let stat;
   try { stat = fs.statSync(LOG_PATH); } catch { return false; }
   // Neues Log = Spiel neu gestartet → alte Lobby verwerfen
-  if (stat.size < offset) { offset = 0; partial = ''; session = null; if (!initial) broadcast(); }
+  if (stat.size < offset) { offset = 0; partial = ''; session = null; inSquad = false; if (!initial) broadcast(); }
   if (stat.size === offset) return false;
   const fd = fs.openSync(LOG_PATH, 'r');
   const buf = Buffer.alloc(stat.size - offset);
@@ -181,6 +194,7 @@ function readLog(initial) {
   partial = lines.pop();
   let changed = false;
   for (const l of lines) if (handleLine(l)) { changed = true; recordHistory(); recordSeen(); }
+  if (screenChanged) { screenChanged = false; changed = true; }
   if (historyDirty) { historyDirty = false; saveHistory(); }
   if (seenDirty) { seenDirty = false; manager.writeJsonAtomic(SEEN_FILE, seen); }
   if (squadDirty) { squadDirty = false; manager.writeJsonAtomic(SQUAD_FILE, squad); }
@@ -515,6 +529,7 @@ function snapshot() {
   return {
     logPath: LOG_PATH, logFound: fs.existsSync(LOG_PATH),
     ownName, ownId, me, session, history: history.slice(-100), winModel: currentWinModel(), uiVersion: uiVersion(),
+    inSquad, upgrades: manager.upgradeAdvice(squad, cards5),
   };
 }
 function uiVersion() {
@@ -570,6 +585,7 @@ for (const f of backups) {
   for (const l of fs.readFileSync(path.join(LOG_DIR, f), 'utf8').split(/\r?\n/)) if (handleLine(l)) { recordHistory(); recordSeen(); }
 }
 session = null;
+inSquad = false;
 readLog(true);
 if (squadDirty) { squadDirty = false; manager.writeJsonAtomic(SQUAD_FILE, squad); }
 // Beim Start ist ein beendetes Match aus dem Log schon vorbei → direkt Startseite
