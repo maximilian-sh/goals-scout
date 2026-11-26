@@ -141,6 +141,10 @@ function applySessionUpdate(s) {
             DEF: ch.stats.defending && ch.stats.defending.weightedValue,
             PHY: ch.stats.physicality && ch.stats.physicality.weightedValue,
           } : null,
+          // Einzelwerte für die Gegner-Tipps in der Lobby
+          height: ch.height,
+          heading: ch.stats && ch.stats.physicality && ch.stats.physicality.heading && ch.stats.physicality.heading.value,
+          longShots: ch.stats && ch.stats.shooting && ch.stats.shooting.longShots && ch.stats.shooting.longShots.value,
         } : session.players[id] && session.players[id].character,
         squad: squad || (session.players[id] && session.players[id].squad),
       };
@@ -644,11 +648,25 @@ function currentAdvice() {
   }
   return advice;
 }
+// GOALS hat für 5v5 noch keine öffentlichen Matchstats (/en/match-stat/<id> → 404, für 1v1 vorhanden).
+// Alle 6 h an einem eigenen 5v5-Match prüfen, ob sich das geändert hat.
+let fiveStatsAvailable = false;
+async function checkFiveStats() {
+  const m = [...history].reverse().find(h => h.format === 'GAME_FORMAT_FIVE_VS_FIVE' && h.res);
+  if (!m || fiveStatsAvailable) return;
+  try {
+    const res = await fetch(`https://playgoals.com/en/match-stat/${m.id}`, UA);
+    if (res.ok && (await res.text()).includes('playerMetrics')) { fiveStatsAvailable = true; console.log('GOALS veröffentlicht jetzt 5v5-Matchstats!'); broadcast(); }
+  } catch { /* offline */ }
+}
+setTimeout(checkFiveStats, 60 * 1000);
+setInterval(checkFiveStats, 6 * 3600 * 1000);
+
 function snapshot() {
   return {
     logPath: LOG_PATH, logFound: fs.existsSync(LOG_PATH),
     ownName, ownId, me, session, history: history.slice(-100), winModel: currentWinModel(), uiVersion: uiVersion(),
-    inSquad, upgrades: currentAdvice(),
+    inSquad, upgrades: currentAdvice(), fiveStatsAvailable,
   };
 }
 function uiVersion() {

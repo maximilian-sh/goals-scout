@@ -209,7 +209,11 @@ function trackerScore(p, fmt = '5v5') {
       { label: 'Winrate', w: .38, n: lin(wr160, .477, .560), val: pct(sc.winRate) },
       { label: 'Dominanz', w: .32, n: lin(mercyS, -.25, .34), val: `${sc.mercyWins}/${sc.mercyLosses}` },
     ];
-    return { score: Math.round(1000 * parts.reduce((a, x) => a + x.w * x.n, 0)), parts, unsure: g < 10 };
+    // Auf die gewohnte Skala abbilden (gleiche Perzentile wie der alte Score: Mitte ≈ 500), damit die Farben gleich bleiben.
+    const raw = 1000 * parts.reduce((a, x) => a + x.w * x.n, 0);
+    const MAP = [[0, 0], [101, 295], [240, 416], [352, 499], [478, 587], [894, 762], [1000, 1000]];
+    const i = MAP.findIndex(([x]) => x >= raw), [x0, y0] = MAP[Math.max(0, i - 1)], [x1, y1] = MAP[Math.max(1, i)];
+    return { score: Math.round(y0 + (y1 - y0) * (raw - x0) / ((x1 - x0) || 1)), parts, unsure: g < 10 };
   }
   const parts = [
     { label: 'Skill Rating', w: .30, n: p.skillRating != null ? lin(p.skillRating, 1300, 1800) : .5, val: p.skillRating ?? '–' },
@@ -388,9 +392,42 @@ function histCard(all, fmt = 'GAME_FORMAT_FIVE_VS_FIVE') {
 }
 
 // ---------- Phasen ----------
+// Gegner-Tipps: aus Karte und Team-Statistik abgeleitet (5v5 hat keine öffentlichen Einzelstats).
+const DEF_ROLES = new Set(['CB', 'FB', 'WB', 'DM']);
+function threatTips(c) {
+  const t = c.stats || {}, out = [];
+  if (c.trait === 'SPEEDSTER' || t.PAC >= 95) out.push(`Tempo ${t.PAC ?? '?'} → nicht hoch verteidigen`);
+  if (c.trait === 'SNIPER' || c.longShots >= 90) out.push(`Distanzschuss ${c.longShots ?? t.SHO ?? '?'} → früh stören`);
+  if (c.heading >= 88 && c.height >= 186) out.push(`Kopfball ${c.heading}, ${c.height} cm → Flanken verhindern`);
+  if (['TRICKSTER', 'DRIBBLER'].includes(c.trait) || t.DRI >= 93) out.push(`Dribbling ${t.DRI ?? '?'} → stehen bleiben, nicht grätschen`);
+  if (['POACHER', 'FINISHER', 'CLINICAL_STRIKER', 'SHADOW_STRIKER'].includes(c.trait)) out.push('lauert im Strafraum → eng decken');
+  return out.slice(0, 2);
+}
+function opponentCard(opp, ownTeamKnown) {
+  if (!ownTeamKnown) return '';
+  const withCard = opp.filter(p => p.character && p.character.ovr);
+  if (!withCard.length) return '';
+  const danger = [...withCard].sort((a, b) => ((trackerScore(b)?.score ?? 500) / 10 + b.character.ovr) - ((trackerScore(a)?.score ?? 500) / 10 + a.character.ovr))[0];
+  const tips = threatTips(danger.character);
+  const weak = withCard.filter(p => DEF_ROLES.has(p.character.role) && p.character.stats && p.character.stats.DEF != null)
+    .sort((a, b) => a.character.stats.DEF - b.character.stats.DEF)[0];
+  const lines = [];
+  if (tips.length) lines.push(`<div><b>${esc(danger.name)}</b> <span class="dim">${esc(danger.character.trait ? danger.character.trait.toLowerCase().replace(/_/g, ' ') + ' · ' : '')}${esc(danger.character.role || '')} ${danger.character.ovr}</span><div style="font-size:12.5px">${tips.map(esc).join(' · ')}</div></div>`);
+  if (weak && weak.character.stats.DEF < 75 && weak !== danger) lines.push(`<div style="font-size:12.5px"><span class="good">Schwachstelle:</span> ${esc(weak.name)} <span class="dim">${esc(weak.character.role)}</span> verteidigt nur ${weak.character.stats.DEF} → auf ihn zudribbeln</div>`);
+  const sc = opp.map(p => p.scout).filter(x => x && x.games >= 10 && x.goalsFor != null);
+  if (sc.length >= 3) {
+    const gf = avg(sc.map(x => x.goalsFor)), ga = avg(sc.map(x => x.goalsAgainst));
+    const mercy = avg(sc.map(x => x.mercyWins / x.games));
+    const style = gf + ga >= 11 ? 'Offenes Spiel' : gf + ga <= 7 ? 'Knappe Spiele' : 'Normale Spiele';
+    lines.push(`<div style="font-size:12.5px"><span class="dim">Gegner-Team:</span> ${style}, Ø ${gf.toFixed(1)} : ${ga.toFixed(1)} Tore${mercy >= .2 ? ` · ${Math.round(mercy * 100)} % Mercy-Siege → drückt früh` : ''}</div>`);
+  }
+  return lines.length ? `<div class="card" style="display:grid;gap:6px"><div class="lbl">Worauf achten</div>${lines.join('')}</div>` : '';
+}
+
 function viewLobby(s, d) {
   const { mine, opp, known } = teams(s, d);
   return matchup(mine, opp, true, known)
+    + opponentCard(opp, known)
     + teamTable(mine, d.ownId, 'mine', known ? 'Dein Team' : 'Team A', PLAYER_COLORS)
     + teamTable(opp, d.ownId, 'opp', known ? 'Gegner' : 'Team B', null);
 }
@@ -612,7 +649,8 @@ function viewUpgrades(d) {
 
 function viewIdle(d) {
   if (!d.logFound) return `<div class="empty">Game.log nicht gefunden – starte GOALS.</div>`;
-  return viewHome(d);
+  const news = d.fiveStatsAvailable ? '<div class="card" style="border-left:3px solid var(--good)"><b class="good">GOALS zeigt jetzt 5v5-Matchstats</b><div class="dim" style="font-size:12.5px">Damit lassen sich Torentstehung, Schussarten und Elfmeter der Gegner auswerten.</div></div>' : '';
+  return news + viewHome(d);
 }
 
 // ---------- Render ----------
