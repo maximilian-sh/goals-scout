@@ -94,7 +94,8 @@
   .mini[data-party="C"] { border-left-color: var(--party-C); } .mini[data-party="D"] { border-left-color: var(--party-D); }
   .mini .t { flex: 1; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .mini .t.me { color: var(--mine); }
-  .mini .v { color: var(--text-2); width: 44px; text-align: right; }
+  .mini .v { color: var(--text-2); width: 44px; text-align: right; white-space: nowrap; }
+  .mini .v.ch { width: 62px; }
 
   /* ---- Details (aufgeklappt) ---- */
   .detail { grid-column: 1 / -1; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); display: none; }
@@ -137,7 +138,13 @@
   body.ov .card, body.ov .row, body.ov .empty, body.ov .head {
     background: rgba(10, 13, 18, .80); border: 1px solid rgba(255, 255, 255, .06);
   }
+  /* `border:` im .ov-Block hat höhere Spezifität als .row[data-party] – Party-Farbe
+     muss daher hier erneut gesetzt werden, sonst ist sie im Overlay unsichtbar. */
   body.ov .row { border-left-width: 3px; }
+  body.ov .row[data-party="A"] { border-left-color: var(--party-A); }
+  body.ov .row[data-party="B"] { border-left-color: var(--party-B); }
+  body.ov .row[data-party="C"] { border-left-color: var(--party-C); }
+  body.ov .row[data-party="D"] { border-left-color: var(--party-D); }
   body.ov .row.me { background: rgba(20, 52, 40, .82); }
   body.ov .head { border-radius: 10px; padding: 7px 10px; }
   body.ov .team-h, body.ov .cols { text-shadow: 0 1px 3px #000, 0 0 6px #000; }
@@ -176,6 +183,9 @@ const wrCls = v => v == null ? 'dim' : v >= .55 ? 'good' : v <= .45 ? 'bad' : ''
 // ---------- Tracker Score ----------
 // 0–1000 aus der bisherigen Leistung, ähnlich wie bei Valorant Tracker. Kleine Stichproben werden
 // Richtung Durchschnitt gezogen, damit 3 Glücks-Siege keinen Top-Score ergeben.
+// Kein xG: GOALS erfasst expected_goals nur für einen Teil der Matches – pro Spieler zwischen
+// 13 % und 68 % seiner Tore. Der Wert streut dadurch 0,5–3,8 pro Match bei gleicher Torausbeute
+// und sagt nichts über den Spieler aus (Maxim 347 vs. aaren.a mit 3 Spielen 736).
 const clamp01 = x => Math.max(0, Math.min(1, x));
 const lin = (x, lo, hi) => clamp01((x - lo) / (hi - lo));
 function trackerScore(p, fmt = '5v5') {
@@ -184,17 +194,18 @@ function trackerScore(p, fmt = '5v5') {
   const pr = p.scout.profile || {};
   const gdRange = fmt === '1v1' ? 3 : 2; // im 1v1 sind die Tore individuell und streuen mehr
   const g = sc.games;
+  const ns = sc.scoredGames || 0;       // Matches mit bekanntem Ergebnis (Mercy/Forfeit fehlt oft)
   const n10 = sc.form.length, w10 = [...sc.form].filter(r => r === 'W').length;
   const wrS = (sc.wins + 5) / (g + 10);
   const formS = (w10 + 2.5) / (n10 + 5);
-  const gdS = (sc.goalDiff * g) / (g + 5);
+  const gdS = ns ? (sc.goalDiff * ns) / (ns + 5) : 0;
   const mercyS = (sc.mercyWins - sc.mercyLosses) / (g + 5);
   const parts = [
-    { label: 'Skill Rating', w: .25, n: p.skillRating != null ? lin(p.skillRating, 1350, 1750) : .5, val: p.skillRating ?? '–' },
-    { label: 'Winrate', w: .25, n: lin(wrS, .35, .65), val: pct(sc.winRate) },
-    { label: 'Tordifferenz', w: .15, n: lin(gdS, -gdRange, gdRange), val: (sc.goalDiff >= 0 ? '+' : '') + sc.goalDiff.toFixed(1) },
-    { label: 'xG / Match', w: .15, n: pr.xgPerMatch != null ? lin(pr.xgPerMatch, .2, 2.5) : .5, val: pr.xgPerMatch != null ? pr.xgPerMatch.toFixed(2) : '–' },
-    { label: 'Form (L10)', w: .10, n: lin(formS, .3, .7), val: pct(sc.winRate10) },
+    { label: 'Skill Rating', w: .30, n: p.skillRating != null ? lin(p.skillRating, 1300, 1800) : .5, val: p.skillRating ?? '–' },
+    { label: 'Winrate', w: .30, n: lin(wrS, .35, .65), val: pct(sc.winRate) },
+    { label: 'Tordifferenz', w: .18, n: ns >= 3 ? lin(gdS, -gdRange, gdRange) : .5,
+      val: sc.goalDiff != null ? (sc.goalDiff >= 0 ? '+' : '') + sc.goalDiff.toFixed(1) : '–' },
+    { label: 'Form (L10)', w: .12, n: lin(formS, .3, .7), val: pct(sc.winRate10) },
     { label: 'Erfahrung', w: .05, n: pr.hours ? lin(Math.log10(pr.hours), Math.log10(5), Math.log10(800)) : .3, val: pr.hours != null ? Math.round(pr.hours) + ' h' : '–' },
     { label: 'Dominanz', w: .05, n: lin(mercyS, -.1, .1), val: `${sc.mercyWins}/${sc.mercyLosses}` },
   ];
@@ -238,7 +249,7 @@ function row(p, ownId, color) {
     <div class="n">${p.skillRating ?? '–'}<small>${p.srDelta ? `<span class="${p.srDelta > 0 ? 'good' : 'bad'}">${sign(p.srDelta)}</span>` : 'Rank ' + (p.rank ?? '–')}</small></div>
     <div class="n">${wr}</div>
     <div class="n">${form}</div>
-    <div class="n wide">${pr && pr.xgPerMatch != null ? fix(pr.xgPerMatch, 2) : '<span class="dim">–</span>'}</div>
+    <div class="n wide" title="Tore / Gegentore pro Spiel (nur Matches mit Ergebnis)">${sc && sc.scoredGames ? `${fix(sc.goalsFor, 1)}<small>${fix(sc.goalsAgainst, 1)}</small>` : '<span class="dim">–</span>'}</div>
     <div class="n wide">${pr && pr.hours != null ? Math.round(pr.hours) + '<span class="dim" style="font-size:12px"> h</span>' : '<span class="dim">–</span>'}</div>
   </div>`;
 }
@@ -249,21 +260,21 @@ function teamTable(list, ownId, cls, title, colors) {
   return `
   <div class="team">
     <div class="team-h ${cls}"><b>${title}</b><span>${parties ? `${parties} Party · ${solo} solo` : 'alle solo'}</span></div>
-    <div class="cols grid"><div>Spieler</div><div title="Tracker Score 0–1000">Score</div><div>SR</div><div>WR</div><div>Form</div><div class="wide">xG</div><div class="wide">Zeit</div></div>
+    <div class="cols grid"><div>Spieler</div><div title="Tracker Score 0–1000">Score</div><div>SR</div><div>WR</div><div>Form</div><div class="wide" title="Tore / Gegentore pro Spiel">Tore</div><div class="wide">Zeit</div></div>
     ${list.map((p, i) => row(p, ownId, colors ? colors[i] : null)).join('')}
   </div>`;
 }
 
-function teamMini(list, ownId, colors) {
+function teamMini(list, ownId, colors, title = 'Dein Team') {
   return `
   <div class="team">
-    <div class="team-h mine"><b>Dein Team</b></div>
+    <div class="team-h mine"><b>${title}</b></div>
     <div class="card" style="padding:4px 0">
       ${list.map((p, i) => `
         <div class="mini" ${p.party ? `data-party="${p.party.tag}"` : ''}>
           <span class="pc" style="background:${colors[i]}"></span>
           <span class="t ${p.userId === ownId ? 'me' : ''}">${esc(p.name)}</span>
-          <span class="v">${p.character?.ovr ?? ''} <span class="dim">${ROLE[p.character?.role] || ''}</span></span>
+          <span class="v ch">${p.character?.ovr ?? ''} <span class="dim">${ROLE[p.character?.role] || ''}</span></span>
           <span class="v">${p.skillRating ?? '–'}</span>
           <span class="v">${scoreHtml(p)}</span>
         </div>`).join('')}
@@ -272,10 +283,16 @@ function teamMini(list, ownId, colors) {
 }
 
 function teams(s, d) {
-  const meHome = s.home.includes(d.ownId) || !s.away.includes(d.ownId);
+  // Ohne eigene ID (Name noch nicht im Log) lieber neutral beschriften als die falsche
+  // Seite als "Dein Team" ausgeben.
+  if (!d.ownId || (!s.home.includes(d.ownId) && !s.away.includes(d.ownId))) {
+    return { mine: s.home.map(id => s.players[id]), opp: s.away.map(id => s.players[id]), known: false };
+  }
+  const meHome = s.home.includes(d.ownId);
   return {
     mine: (meHome ? s.home : s.away).map(id => s.players[id]),
     opp: (meHome ? s.away : s.home).map(id => s.players[id]),
+    known: true,
   };
 }
 
@@ -285,21 +302,23 @@ function winChance(mySr, oppSr) {
   return 1 / (1 + Math.exp(-(m && m.use ? m.a + m.b * d : d)));
 }
 
-function matchup(mine, opp, full) {
+function matchup(mine, opp, full, known = true) {
   const T = l => ({
     sr: avg(l.map(p => p.skillRating)),
     score: avg(l.map(p => trackerScore(p)?.score)),
     wr: avg(l.map(p => p.scout?.games ? p.scout.winRate : null)),
     form: avg(l.map(p => p.scout?.games ? p.scout.winRate10 : null)),
     ovr: avg(l.map(p => p.character?.ovr)),
-    xg: avg(l.map(p => p.scout?.profile?.xgPerMatch)),
+    gf: avg(l.map(p => p.scout?.scoredGames ? p.scout.goalsFor : null)),
+    ga: avg(l.map(p => p.scout?.scoredGames ? p.scout.goalsAgainst : null)),
     hrs: avg(l.map(p => p.scout?.profile?.hours)),
   });
   const a = T(mine), b = T(opp);
   const odds = a.sr != null && b.sr != null ? winChance(a.sr, b.sr) : null;
   const oc = odds == null ? '' : odds >= .52 ? 'good' : odds <= .48 ? 'bad' : '';
-  const r = (label, x, y, fmt) => {
-    const xw = x != null && y != null && x > y, yw = x != null && y != null && y > x;
+  const r = (label, x, y, fmt, higher = true) => {
+    const ok = x != null && y != null && x !== y;
+    const xw = ok && (x > y) === higher, yw = ok && (y > x) === higher;
     return `<div class="a ${xw ? 'win' : 'lose'}">${fmt(x)}</div><div class="k">${label}</div><div class="b ${yw ? 'win' : 'lose'}">${fmt(y)}</div>`;
   };
   return `
@@ -310,13 +329,14 @@ function matchup(mine, opp, full) {
       </div>
       <div class="odds-bar"><i style="width:${odds == null ? 50 : odds * 100}%"></i></div>
       ${full ? `<div class="cmp">
-        <div class="a lbl" style="color:var(--mine)">Dein Team</div><div class="k"></div><div class="b lbl" style="color:var(--opp)">Gegner</div>
+        <div class="a lbl" style="color:var(--mine)">${known ? 'Dein Team' : 'Team A'}</div><div class="k"></div><div class="b lbl" style="color:var(--opp)">${known ? 'Gegner' : 'Team B'}</div>
         ${r('Ø Score', a.score, b.score, v => fix(v, 0))}
         ${r('Ø SR', a.sr, b.sr, v => fix(v, 0))}
         ${r('Ø Winrate', a.wr, b.wr, pct)}
         ${r('Ø Form (L10)', a.form, b.form, pct)}
         ${r('Ø OVR', a.ovr, b.ovr, v => fix(v))}
-        ${r('Ø xG / Match', a.xg, b.xg, v => fix(v, 2))}
+        ${r('Ø Tore', a.gf, b.gf, v => fix(v, 1))}
+        ${r('Ø Gegentore', a.ga, b.ga, v => fix(v, 1), false)}
         ${r('Ø Spielzeit', a.hrs, b.hrs, v => v == null ? '–' : Math.round(v) + ' h')}
       </div>` : ''}
     </div>`;
@@ -342,17 +362,17 @@ function histCard(all, fmt = 'GAME_FORMAT_FIVE_VS_FIVE') {
 
 // ---------- Phasen ----------
 function viewLobby(s, d) {
-  const { mine, opp } = teams(s, d);
-  return matchup(mine, opp, true)
-    + teamTable(mine, d.ownId, 'mine', 'Dein Team', PLAYER_COLORS)
-    + teamTable(opp, d.ownId, 'opp', 'Gegner', null);
+  const { mine, opp, known } = teams(s, d);
+  return matchup(mine, opp, true, known)
+    + teamTable(mine, d.ownId, 'mine', known ? 'Dein Team' : 'Team A', PLAYER_COLORS)
+    + teamTable(opp, d.ownId, 'opp', known ? 'Gegner' : 'Team B', null);
 }
 
 function viewLive(s, d) {
-  const { mine, opp } = teams(s, d);
-  return matchup(mine, opp, false)
-    + teamTable(opp, d.ownId, 'opp', 'Gegner', null)
-    + teamMini(mine, d.ownId, PLAYER_COLORS);
+  const { mine, opp, known } = teams(s, d);
+  return matchup(mine, opp, false, known)
+    + teamTable(opp, d.ownId, 'opp', known ? 'Gegner' : 'Team B', null)
+    + teamMini(mine, d.ownId, PLAYER_COLORS, known ? 'Dein Team' : 'Team A');
 }
 
 function viewPost(s, d) {
@@ -361,7 +381,8 @@ function viewPost(s, d) {
   let res = '<div class="big dim">Match beendet</div><div class="dim" style="margin-top:4px">Ergebnis wird geladen…</div>';
   if (entry && entry.res) {
     const t = { W: ['SIEG', 'good'], L: ['NIEDERLAGE', 'bad'], D: ['UNENTSCHIEDEN', ''] }[entry.res];
-    res = `<div class="big ${t[1]}">${t[0]}</div><div class="score">${entry.gf} : ${entry.ga}</div>`;
+    const score = entry.gf != null && entry.ga != null ? `${entry.gf} : ${entry.ga}` : 'ohne Spielstand';
+    res = `<div class="big ${t[1]}">${t[0]}</div><div class="score">${score}</div>`;
   }
   // Heute, gleicher Modus wie dieses Match
   const same = x => x.format === s.format && x.mode === s.mode;
@@ -370,6 +391,7 @@ function viewPost(s, d) {
   const today = h.filter(x => same(x) && x.res && x.at && new Date(x.at) >= day);
   const w = today.filter(x => x.res === 'W').length, l = today.filter(x => x.res === 'L').length, dr = today.filter(x => x.res === 'D').length;
   const srStart = today[0]?.sr, srNow = today[today.length - 1]?.sr;
+  const srDiff = today.length > 1 && srStart != null && srNow != null ? srNow - srStart : null;
   const last = [...h].filter(same).reverse().slice(0, 6);
   return `
     <div class="card result">${res}
@@ -380,14 +402,14 @@ function viewPost(s, d) {
       <div class="stats3">
         <div><b>${today.length}</b><span class="dim">Matches</span></div>
         <div><b><span class="good">${w}</span>–<span class="bad">${l}</span>${dr ? `–${dr}` : ''}</b><span class="dim">S–N</span></div>
-        <div><b class="${srNow - srStart >= 0 ? 'good' : 'bad'}">${srStart != null ? (sign(srNow - srStart) || '±0') : '–'}</b><span class="dim">SR (bis Matchstart)</span></div>
+        <div><b class="${srDiff == null ? 'dim' : srDiff >= 0 ? 'good' : 'bad'}">${srDiff == null ? '–' : (sign(srDiff) || '±0')}</b><span class="dim">SR (bis Matchstart)</span></div>
       </div>
     </div>
     ${histCard(h, s.format)}
     <div class="card list">
       <div class="lbl" style="margin-bottom:4px">Letzte Matches</div>
       ${last.map(x => `<div class="li"><span class="dim">${new Date(x.at).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}</span>
-        <span class="${x.res === 'W' ? 'good' : x.res === 'L' ? 'bad' : 'dim'}" style="font-weight:600">${x.res ? { W: 'S', L: 'N', D: 'U' }[x.res] + ' ' + x.gf + ':' + x.ga : '…'}</span>
+        <span class="${x.res === 'W' ? 'good' : x.res === 'L' ? 'bad' : 'dim'}" style="font-weight:600">${x.res ? { W: 'S', L: 'N', D: 'U' }[x.res] + (x.gf != null ? ' ' + x.gf + ':' + x.ga : '') : '…'}</span>
         <span>${x.sr}</span><span class="dim">${x.teamAvg} vs ${x.oppAvg}</span></div>`).join('')}
     </div>
 `;
@@ -442,11 +464,10 @@ function view1v1(s, d) {
         ${r('Winrate', a1.games ? a1.winRate : null, b1.games ? b1.winRate : null, pct)}
         ${r('Form (L10)', a1.games ? a1.winRate10 : null, b1.games ? b1.winRate10 : null, pct)}
         <div class="a">${dots(a1.form)}</div><div class="k">Letzte 5</div><div class="b" style="display:flex;justify-content:flex-end">${dots(b1.form)}</div>
-        ${r('Tore / Spiel', a1.games ? a1.goalsFor : null, b1.games ? b1.goalsFor : null, v => v.toFixed(1))}
-        ${r('Gegentore / Spiel', a1.games ? a1.goalsAgainst : null, b1.games ? b1.goalsAgainst : null, v => v.toFixed(1), false)}
-        ${r('Zu Null', a1.games ? a1.cleanSheets : null, b1.games ? b1.cleanSheets : null, pct)}
+        ${r('Tore / Spiel', a1.scoredGames ? a1.goalsFor : null, b1.scoredGames ? b1.goalsFor : null, v => v.toFixed(1))}
+        ${r('Gegentore / Spiel', a1.scoredGames ? a1.goalsAgainst : null, b1.scoredGames ? b1.goalsAgainst : null, v => v.toFixed(1), false)}
+        ${r('Zu Null', a1.scoredGames ? a1.cleanSheets : null, b1.scoredGames ? b1.cleanSheets : null, pct)}
         ${r('Kader Ø OVR', a.squad?.avgOvr ?? A.oneStats?.avgOvr, b.squad?.avgOvr ?? B.oneStats?.avgOvr, v => Math.round(v))}
-        ${r('xG / Match', A.profile?.xgPerMatch, B.profile?.xgPerMatch, v => v.toFixed(2))}
         ${r('Spielzeit', A.profile?.hours, B.profile?.hours, v => Math.round(v) + ' h')}
         ${r('Heute gespielt', a1.games24h, b1.games24h, v => v)}
       </div>
@@ -491,7 +512,7 @@ function viewHome(d) {
         <div style="min-width:0">
           <div class="lbl">Dein Profil</div>
           <div style="font-size:20px;font-weight:750;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(d.ownName || 'Unbekannt')}</div>
-          <div class="dim" style="font-size:12px">${[pr.hours != null ? Math.round(pr.hours) + ' h gespielt' : null, pr.matches != null ? pr.matches + ' Matches' : null, pr.xgPerMatch != null ? 'xG ' + pr.xgPerMatch.toFixed(2) + '/Sp' : null].filter(Boolean).join(' · ')}</div>
+          <div class="dim" style="font-size:12px">${[pr.hours != null ? Math.round(pr.hours) + ' h gespielt' : null, pr.matches != null ? pr.matches + ' Matches' : null].filter(Boolean).join(' · ')}</div>
         </div>
         <div style="text-align:right;flex:none">
           <div class="lbl">Score</div>
@@ -528,7 +549,7 @@ function viewHome(d) {
       ${[...r5, ...r1].sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 5).map(x => `<div class="li">
         <span class="dim">${new Date(x.at).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}</span>
         <span class="dim">${(x.format || '').includes('FIVE') ? '5v5' : '1v1'}</span>
-        <span class="${x.res === 'W' ? 'good' : x.res === 'L' ? 'bad' : 'dim'}" style="font-weight:600">${x.res ? { W: 'S', L: 'N', D: 'U' }[x.res] + ' ' + x.gf + ':' + x.ga : '…'}</span>
+        <span class="${x.res === 'W' ? 'good' : x.res === 'L' ? 'bad' : 'dim'}" style="font-weight:600">${x.res ? { W: 'S', L: 'N', D: 'U' }[x.res] + (x.gf != null ? ' ' + x.gf + ':' + x.ga : '') : '…'}</span>
         <span>${x.sr}</span></div>`).join('')}
     </div>` : ''}`;
 }

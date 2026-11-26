@@ -77,7 +77,8 @@ const NEUTRAL_SCREENS = new Set(['RadialMenu', 'ScrollableList']); // kommen in 
 let inSquad = false, screenChanged = false;
 
 function handleLine(line) {
-  const owner = line.match(/OwningPlayerName: (\S+)/);
+  // Namen dürfen Leerzeichen enthalten – bis Zeilenende lesen.
+  const owner = line.match(/OwningPlayerName:\s*(\S.*?)\s*$/);
   if (owner && !process.env.GOALS_NAME) ownName = owner[1];
 
   // Aktiver Bildschirm im Spielmenü: Kader, Sammlung oder Upgrade → Upgrade-Tipps im Overlay
@@ -232,21 +233,47 @@ async function getJson(url) {
 }
 
 // Aggregierte Profilwerte stehen nur im HTML der offiziellen Stats-Seite.
+// Das JSON ist in Next.js eingebettet und kann verschachtelt sein – daher Klammern zählen
+// statt mit einer Regex am ersten "}" abzuschneiden (sonst fehlen bei Formatänderungen alle Werte).
+function extractObject(html, key) {
+  const at = html.indexOf(`"${key}":`);
+  if (at === -1) return null;
+  const start = html.indexOf('{', at);
+  if (start === -1) return null;
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < html.length; i++) {
+    const c = html[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === '\\') esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    else if (c === '{') depth++;
+    else if (c === '}' && --depth === 0) {
+      try { return JSON.parse(html.slice(start, i + 1)); } catch { return null; }
+    }
+  }
+  return null;
+}
+
 async function fetchProfile(userId) {
   const res = await fetch(`https://playgoals.com/en/user-stats/${userId}/x`, UA);
   if (!res.ok) return null;
   const html = (await res.text()).split('\\"').join('"');
-  const st = html.match(/"stats":(\{"skill_rating"[^}]*\})/);
+  const stats = extractObject(html, 'stats');
   const cr = html.match(/"created_at":\{"seconds":(\d+)\}/);
   const lo = html.match(/"last_known_gaming_platform_used_at":\{"seconds":(\d+)\}/);
-  let stats = null;
-  try { stats = st && JSON.parse(st[1]); } catch {}
   if (!stats) return null;
   const mp = stats.matches_played;
   return {
     matches: mp ?? null,
     wins: stats.wins, losses: stats.losses,
     winRate: mp ? (stats.wins || 0) / mp : null,
+    // Achtung: expected_goals wird von GOALS nur für einen Teil der Matches erfasst.
+    // Der Wert ist deshalb NICHT über Spieler hinweg vergleichbar (0,5–3,8 pro Match bei
+    // gleicher Torausbeute) und darf nicht in den Tracker Score einfließen.
     xg: stats.expected_goals,
     xgPerMatch: mp ? (stats.expected_goals || 0) / mp : null,
     hours: stats.play_time_seconds != null ? stats.play_time_seconds / 3600 : null,
@@ -260,11 +287,17 @@ async function fetchPlayer(userId) {
   const c = playerCache.get(userId);
   if (c && Date.now() - c.at < PLAYER_CACHE_MS) return c.data;
   const sessions = [];
+  const sessionIds = new Set(); // Seiten können sich überlappen, wenn zwischen den Abrufen ein Match endet
   const names = {};
   let oneStats = null;
   for (let page = 1; page <= PAGES; page++) {
     const json = await getJson(`${API}?userId=${userId}&page=${page}&pageSize=50`);
-    sessions.push(...(json.sessions || []));
+    for (const s of json.sessions || []) {
+      const id = s.game_session && s.game_session.id;
+      if (id && sessionIds.has(id)) continue;
+      if (id) sessionIds.add(id);
+      sessions.push(s);
+    }
     for (const u of Object.values(json.users || {})) if (u && u.id && u.goals_username) names[u.id] = u.goals_username;
     // Offizielle 1v1-Ranked-Statistik steckt in userStats (für alle Spieler der geladenen Matches)
     for (const us of json.userStats || []) {
@@ -281,7 +314,8 @@ async function fetchPlayer(userId) {
   // Häufigste Mitspieler mit Bilanz (für die eigene Startseite)
   data.topMates = Object.entries(data.mateRecords)
     .map(([id, r]) => ({ id, name: names[id] || (seen[id] && seen[id].name) || id.slice(0, 8), games: r.n, wins: r.w }))
-    .filter(m => m.games >= 3).sort((a, b) => b.games - a.games).slice(0, 4);
+    .filter(m => m.games >= 3 && m.name !== m.id.slice(0, 8)) // Platzhalternamen nicht als Mitspieler zeigen
+    .sort((a, b) => b.games - a.games).slice(0, 4);
   playerCache.set(userId, { at: Date.now(), data });
   return data;
 }
@@ -289,21 +323,26 @@ async function fetchPlayer(userId) {
 // Kennzahlen aus einer Liste von Matches (neuestes zuerst) – für 5v5 und 1v1 gleich.
 function aggregate(pool, sampleType) {
   const n = pool.length;
+  // Torbasierte Kennzahlen nur über Matches mit bekanntem Ergebnis rechnen:
+  // GOALS liefert bei Mercy/Forfeit oft score:null – als 0:0 gezählt verfälscht das
+  // Tordifferenz und "Zu Null" massiv (11 von 95 5v5-Matches).
+  const scored = pool.filter(m => m.gf != null && m.ga != null);
+  const ns = scored.length;
   const count = r => pool.filter(m => m.res === r).length;
-  const sum = fn => pool.reduce((a, m) => a + fn(m), 0);
+  const sum = fn => scored.reduce((a, m) => a + fn(m), 0);
   const streakRes = pool[0] && pool[0].res;
   let streak = 0; while (streak < n && pool[streak].res === streakRes) streak++;
   const now = Date.now() / 1000;
   const last10 = pool.slice(0, 10);
   return {
-    sampleType, games: n,
+    sampleType, games: n, scoredGames: ns,
     wins: count('W'), draws: count('D'), losses: count('L'),
     winRate: n ? count('W') / n : null,
     winRate10: last10.length ? last10.filter(m => m.res === 'W').length / last10.length : null,
-    goalsFor: n ? sum(m => m.gf) / n : null,
-    goalsAgainst: n ? sum(m => m.ga) / n : null,
-    goalDiff: n ? sum(m => m.gf - m.ga) / n : null,
-    cleanSheets: n ? pool.filter(m => m.ga === 0).length / n : null,
+    goalsFor: ns ? sum(m => m.gf) / ns : null,
+    goalsAgainst: ns ? sum(m => m.ga) / ns : null,
+    goalDiff: ns ? sum(m => m.gf - m.ga) / ns : null,
+    cleanSheets: ns ? scored.filter(m => m.ga === 0).length / ns : null,
     mercyWins: pool.filter(m => m.mercy && m.res === 'W').length,
     mercyLosses: pool.filter(m => m.mercy && m.res === 'L').length,
     forfeits: pool.filter(m => m.forfeit).length,
@@ -334,10 +373,12 @@ function summarizePlayer(userId, sessions) {
 
     if (md.game_format === 'GAME_FORMAT_ONE_VS_ONE' && end.one_vs_one) {
       const f = end.one_vs_one;
+      if (!f.match_result) continue;
       const isHome = f.home_team.user_id === userId;
       if (!isHome && f.away_team.user_id !== userId) continue;
       const me = isHome ? f.home_team : f.away_team, opp = isHome ? f.away_team : f.home_team;
-      const m = { ...base, res: resultFor(f.match_result, isHome), gf: me.score || 0, ga: opp.score || 0, sr: me.skill_rating, mode: md.game_mode };
+      const m = { ...base, res: resultFor(f.match_result, isHome),
+        gf: me.score ?? null, ga: opp.score ?? null, sr: me.skill_rating, mode: md.game_mode };
       (md.game_mode === 'GAME_MODE_RANKED' ? ranked1 : other1).push(m);
       if (ownId && userId !== ownId && opp.user_id === ownId) h2h1[m.res]++;
       continue;
@@ -345,14 +386,15 @@ function summarizePlayer(userId, sessions) {
 
     if (md.game_format !== 'GAME_FORMAT_FIVE_VS_FIVE' || !end.five_vs_five) continue;
     const f = end.five_vs_five;
+    if (!f.match_result) continue;
     const homeIds = (f.home_team.users || []).map(u => u.user_id);
     const awayIds = (f.away_team.users || []).map(u => u.user_id);
     const isHome = homeIds.includes(userId);
     if (!isHome && !awayIds.includes(userId)) continue;
     const myIds = isHome ? homeIds : awayIds, oppIds = isHome ? awayIds : homeIds;
     const m = { ...base, res: resultFor(f.match_result, isHome),
-      gf: (isHome ? f.home_team.score : f.away_team.score) || 0,
-      ga: (isHome ? f.away_team.score : f.home_team.score) || 0 };
+      gf: (isHome ? f.home_team.score : f.away_team.score) ?? null,
+      ga: (isHome ? f.away_team.score : f.home_team.score) ?? null };
     (md.game_mode === 'GAME_MODE_RANKED' ? ranked5 : quick5).push(m);
     for (const id of myIds) if (id !== userId) {
       mates[id] = (mates[id] || 0) + 1;
@@ -380,7 +422,22 @@ function summarizePlayer(userId, sessions) {
 }
 
 // Premades erkennen: Spieler im selben Lobby-Team, die in ihrer Historie oft zusammen gespielt haben.
-const PARTY_MIN_SHARED = 3;
+// Schwelle bewusst streng: 3 gemeinsame Matches sind im kleinen GOALS-Pool schnell Zufall
+// (gleiche Rangregion, gleiche Uhrzeit) und führen zu falschen Party-Markierungen.
+const PARTY_MIN_SHARED = 4;
+const PARTY_MIN_RATIO = 0.2; // zusätzlich: mind. 20 % der Spiele des Spielers mit der kleineren Stichprobe
+
+// Anzahl gemeinsamer Matches – nur wenn beide Spieler geladen sind und beide die Zahl bestätigen.
+function partyShared(a, b) {
+  const sa = session.players[a] && session.players[a].scout;
+  const sb = session.players[b] && session.players[b].scout;
+  if (!sa || !sb || !sa.games || !sb.games) return 0;
+  const shared = Math.min(sa.mates[b] || 0, sb.mates[a] || 0);
+  if (!shared) return 0;
+  const smaller = Math.min(sa.games, sb.games);
+  return shared >= PARTY_MIN_SHARED && shared / smaller >= PARTY_MIN_RATIO ? shared : 0;
+}
+
 function detectParties() {
   if (!session) return;
   let label = 0;
@@ -389,9 +446,7 @@ function detectParties() {
     const find = x => parent[x] === x ? x : (parent[x] = find(parent[x]));
     for (const a of team) for (const b of team) {
       if (a >= b) continue;
-      const sa = session.players[a].scout, sb = session.players[b].scout;
-      const shared = Math.max((sa && sa.mates[b]) || 0, (sb && sb.mates[a]) || 0);
-      if (shared >= PARTY_MIN_SHARED) parent[find(a)] = find(b);
+      if (partyShared(a, b)) parent[find(a)] = find(b);
     }
     const groups = {};
     for (const id of team) (groups[find(id)] ||= []).push(id);
@@ -400,8 +455,7 @@ function detectParties() {
       if (g.length < 2) continue;
       const tag = String.fromCharCode(65 + label++);
       for (const id of g) {
-        const sc = session.players[id].scout;
-        const shared = Math.max(...g.filter(x => x !== id).map(o => (sc && sc.mates[o]) || 0));
+        const shared = Math.max(...g.filter(x => x !== id).map(o => partyShared(id, o)));
         session.players[id].party = { tag, size: g.length, shared };
       }
     }
@@ -428,8 +482,11 @@ function recordSeen() {
   for (const id of [...session.home, ...session.away]) {
     const p = session.players[id];
     if (p.skillRating == null) continue;
-    const e = seen[id] ||= { name: p.name, lobbies: {} };
-    e.name = p.name;
+    // Solange der Anzeigename im Log fehlt, steht dort die ID-Kurzform – die soll einen
+    // bereits bekannten echten Namen nicht überschreiben.
+    const placeholder = !p.name || p.name === id.slice(0, 8);
+    const e = seen[id] ||= { name: placeholder ? null : p.name, lobbies: {} };
+    if (!placeholder) e.name = p.name;
     if (!e.lobbies[session.id]) {
       e.lobbies[session.id] = { at: session.createdAt, sr: p.skillRating, mode: session.mode, format: session.format };
       seenDirty = true;
@@ -450,16 +507,24 @@ function annotateSeen() {
 }
 
 const inflight = new Set();
+const RETRY_AFTER_MS = 60 * 1000;
 function enrichSession() {
   if (!session) return;
   annotateSeen();
   for (const id of [...session.home, ...session.away]) {
     const p = session.players[id];
     if (!p || p.scout || inflight.has(id)) continue;
+    // Fehlgeschlagene Abrufe nicht im Sekundentakt wiederholen (sonst API-Hammer bei 404/Offline).
+    if (p.scoutError && Date.now() - (p.scoutErrorAt || 0) < RETRY_AFTER_MS) continue;
     inflight.add(id);
     fetchPlayer(id)
-      .then(d => { if (session && session.players[id]) session.players[id].scout = d; })
-      .catch(e => { if (session && session.players[id]) session.players[id].scoutError = e.message; })
+      .then(d => { if (session && session.players[id]) { session.players[id].scout = d; delete session.players[id].scoutError; } })
+      .catch(e => {
+        if (session && session.players[id]) {
+          session.players[id].scoutError = e.message;
+          session.players[id].scoutErrorAt = Date.now();
+        }
+      })
       .finally(() => { inflight.delete(id); detectParties(); broadcast(); });
   }
 }
@@ -513,10 +578,12 @@ async function fillResults(force) {
       const end = s.match_ended;
       if (!h || !end) continue;
       const f = end.five_vs_five || end.one_vs_one;
-      if (!f) continue;
+      if (!f || !f.match_result) continue;
       const home = f.home_team, away = f.away_team;
-      h.gf = (h.isHome ? home.score : away.score) || 0;
-      h.ga = (h.isHome ? away.score : home.score) || 0;
+      const gf = h.isHome ? home.score : away.score;
+      const ga = h.isHome ? away.score : home.score;
+      // Bei Mercy/Forfeit fehlt oft der Score – dann lieber keinen Score anzeigen als 0:0.
+      if (gf != null && ga != null) { h.gf = gf; h.ga = ga; } else { delete h.gf; delete h.ga; }
       h.res = f.match_result === 'MATCH_RESULT_DRAW' ? 'D' : (f.match_result === 'MATCH_RESULT_HOME_WIN') === h.isHome ? 'W' : 'L';
       changed = true;
     }
