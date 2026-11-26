@@ -200,6 +200,17 @@ function trackerScore(p, fmt = '5v5') {
   const formS = (w10 + 2.5) / (n10 + 5);
   const gdS = ns ? (sc.goalDiff * ns) / (ns + 5) : 0;
   const mercyS = (sc.mercyWins - sc.mercyLosses) / (g + 5);
+  if (fmt === '5v5') {
+    // An 20.442 Ranked-5v5-Matches gefittet (Nov 2026): Winrate stark geschrumpft und Mercy-Bilanz
+    // sagen Siege voraus, Tordifferenz/Form/Erfahrung bringen zusätzlich nichts.
+    const wr160 = (sc.wins + 80) / (g + 160);
+    const parts = [
+      { label: 'Skill Rating', w: .30, n: p.skillRating != null ? lin(p.skillRating, 1400, 2100) : .5, val: p.skillRating ?? '–' },
+      { label: 'Winrate', w: .38, n: lin(wr160, .477, .560), val: pct(sc.winRate) },
+      { label: 'Dominanz', w: .32, n: lin(mercyS, -.25, .34), val: `${sc.mercyWins}/${sc.mercyLosses}` },
+    ];
+    return { score: Math.round(1000 * parts.reduce((a, x) => a + x.w * x.n, 0)), parts, unsure: g < 10 };
+  }
   const parts = [
     { label: 'Skill Rating', w: .30, n: p.skillRating != null ? lin(p.skillRating, 1300, 1800) : .5, val: p.skillRating ?? '–' },
     { label: 'Winrate', w: .30, n: lin(wrS, .35, .65), val: pct(sc.winRate) },
@@ -301,6 +312,22 @@ function winChance(mySr, oppSr) {
   const d = (mySr - oppSr) / 400 * Math.LN10, m = last && last.winModel;
   return 1 / (1 + Math.exp(-(m && m.use ? m.a + m.b * d : d)));
 }
+// Siegchance für eine Lobby: Elo auf den SR-Schnitt. Fehlt bei 2+ Spielern eines Teams die SR,
+// stattdessen das aus 20.442 Matches gefittete Modell aus Winrate, Mercy-Bilanz und Parties.
+function teamWinChance(mine, opp) {
+  const sr = l => avg(l.map(p => p.skillRating));
+  const srMissing = l => l.filter(p => p.skillRating == null).length;
+  if (srMissing(mine) < 2 && srMissing(opp) < 2 && sr(mine) != null && sr(opp) != null) return winChance(sr(mine), sr(opp));
+  const f = l => ({
+    wr: avg(l.map(p => p.scout?.games != null ? (p.scout.wins + 80) / (p.scout.games + 160) : null)),
+    mercy: avg(l.map(p => p.scout?.games != null ? (p.scout.mercyWins - p.scout.mercyLosses) / (p.scout.games + 5) : null)),
+    party: l.filter(p => p.party).length,
+  });
+  const a = f(mine), b = f(opp);
+  if (a.wr == null || b.wr == null) return null;
+  const x = 12.2 * (a.wr - b.wr) + 2.47 * ((a.mercy ?? 0) - (b.mercy ?? 0)) + 0.067 * (a.party - b.party);
+  return 1 / (1 + Math.exp(-x));
+}
 
 function matchup(mine, opp, full, known = true) {
   const T = l => ({
@@ -314,7 +341,7 @@ function matchup(mine, opp, full, known = true) {
     hrs: avg(l.map(p => p.scout?.profile?.hours)),
   });
   const a = T(mine), b = T(opp);
-  const odds = a.sr != null && b.sr != null ? winChance(a.sr, b.sr) : null;
+  const odds = teamWinChance(mine, opp);
   const oc = odds == null ? '' : odds >= .52 ? 'good' : odds <= .48 ? 'bad' : '';
   const r = (label, x, y, fmt, higher = true) => {
     const ok = x != null && y != null && x !== y;

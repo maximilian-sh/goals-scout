@@ -536,7 +536,10 @@ function recordHistory() {
   if (!me || me.skillRating == null) return;
   const myTeam = session.home.includes(ownId) ? session.home : session.away;
   const opp = myTeam === session.home ? session.away : session.home;
-  const avg = ids => Math.round(ids.reduce((a, id) => a + (session.players[id].skillRating || 0), 0) / (ids.length || 1));
+  // Fehlende SR nicht als 0 zählen (drückte den Schnitt um ~350 und machte die Siegchance flach)
+  const srs = ids => ids.map(id => session.players[id].skillRating).filter(v => typeof v === 'number');
+  const avg = ids => { const v = srs(ids); return v.length ? Math.round(v.reduce((a, x) => a + x, 0) / v.length) : null; };
+  const missing = ids => ids.length - srs(ids).length;
   let h = history.find(x => x.id === session.id);
   if (!h) {
     // Beim Einlesen alter Backup-Logs: schon herausgekürzte Matches nicht wieder anhängen
@@ -547,6 +550,7 @@ function recordHistory() {
     at: session.createdAt, mode: session.mode, format: session.format,
     sr: me.skillRating, rank: me.rank, teamAvg: avg(myTeam), oppAvg: avg(opp),
     isHome: myTeam === session.home,
+    srOk: missing(myTeam) <= 1 && missing(opp) <= 1, // nur solche Matches taugen für winModel
   });
   if (session.ownCard) h.card = session.ownCard;
   const others = [...session.home, ...session.away].filter(id => id !== ownId)

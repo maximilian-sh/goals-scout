@@ -44,10 +44,15 @@ test('analyze5: leere Historie', () => {
 });
 
 test('winModel: unter 30 Matches nicht verwenden', () => {
-  const h = Array.from({ length: 10 }, (_, i) => ({ format: 'GAME_FORMAT_FIVE_VS_FIVE', mode: 'GAME_MODE_RANKED', res: i % 2 ? 'W' : 'L', teamAvg: 1500, oppAvg: 1480 }));
+  const h = Array.from({ length: 10 }, (_, i) => ({ format: 'GAME_FORMAT_FIVE_VS_FIVE', mode: 'GAME_MODE_RANKED', res: i % 2 ? 'W' : 'L', teamAvg: 1500, oppAvg: 1480, srOk: true }));
   const r = m.winModel(h);
   assert.strictEqual(r.use, false);
   assert.strictEqual(r.n, 10);
+});
+
+test('winModel: Matches mit fehlender SR (ohne srOk) werden ignoriert', () => {
+  const h = Array.from({ length: 40 }, (_, i) => ({ format: 'GAME_FORMAT_FIVE_VS_FIVE', mode: 'GAME_MODE_RANKED', res: i % 2 ? 'W' : 'L', teamAvg: 1500, oppAvg: 1150 }));
+  assert.strictEqual(m.winModel(h).n, 0);
 });
 
 test('saveJson: Fehler werfen nicht, sondern liefern false', () => {

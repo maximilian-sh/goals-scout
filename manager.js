@@ -260,7 +260,7 @@ function fit(rows, prior = 8) {
 }
 function winModel(history) {
   const rows = (history || [])
-    .filter(h => h.format === 'GAME_FORMAT_FIVE_VS_FIVE' && h.mode === 'GAME_MODE_RANKED' && (h.res === 'W' || h.res === 'L') && h.teamAvg && h.oppAvg)
+    .filter(h => h.format === 'GAME_FORMAT_FIVE_VS_FIVE' && h.mode === 'GAME_MODE_RANKED' && (h.res === 'W' || h.res === 'L') && h.srOk && h.teamAvg && h.oppAvg)
     .map(h => ({ d: (h.teamAvg - h.oppAvg) / 400 * Math.LN10, y: h.res === 'W' ? 1 : 0 }));
   if (rows.length < 30) return { use: false, n: rows.length, a: 0, b: 1 };
   let model = 0, elo = 0;
