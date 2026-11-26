@@ -20,7 +20,8 @@ overlay/main.js (Electron): transparentes Fenster, startet server.js im selben P
 | `public/index.html` | Älteres großes Browser-Dashboard (`start.bat`), weniger gepflegt |
 | `manager.js` / `public/manager.html` | Kader-Manager (Tray → „Kader-Manager öffnen“). **5v5 zuerst** (`analyze5`): eigene Karte pro Match (`history[].card`, aus `participants.users[ownId].fiveVsFive.character`), Karten-OVR der Lobby (`history[].lobbyOvrs`), aktueller Kartenstand in `data/cards5v5.json`; zeigt Bilanz/SR pro Karte, Lobby-Niveau, nächste lohnende Karte, Talente. Darunter 1v1 (`analyze`): Kader aus dem Log, öffentliche 1v1-Matchstats (`playerMetrics`, `playerRatings`), Stammelf/Entwickeln/Abgeben. Nur lesend |
 | `overlay/main.js` | Electron-Hauptprozess: Fenster rechts am Bildschirmrand, klick-durchlässig, immer oben, Tray, Hotkeys, Auto-Updater. Läuft unsichtbar im Tray (Autostart mit Windows) und zeigt das Overlay nur, solange `Goals.exe` läuft (`checkGame()`, alle 3 s) |
-| `scripts/release.js` | Version bumpen, Installer bauen, als Release ins private GitHub-Repo laden |
+| `scripts/release.js` | Version bumpen + Tag pushen; der Tag startet den Build auf GitHub |
+| `.github/workflows/` | `test.yml` (Tests bei Push/PR), `release.yml` (Installer bauen + Release bei Tag `v*`) |
 | `build/` | App-Icons für den Installer |
 
 ## Datenquellen (wichtigstes Wissen – war Reverse Engineering)
@@ -38,6 +39,8 @@ overlay/main.js (Electron): transparentes Fenster, startet server.js im selben P
    - Kein Live-Spielstand pro Team im Log (nur `GoalScoredActivated`-Audio-Events ohne Seite).
 2. **`https://playgoals.com/api/game-sessions?userId=<uuid>&page=N&pageSize=50`** (max. 50/Seite, nur beendete Matches, kein CORS → nur serverseitig).
    - `sessions[].match_ended.five_vs_five|one_vs_one` mit Teams, Score, `match_result`, `match_end_reason` (`FULL_TIME`, `MERCY_FORFEIT`, `FORFEIT`)
+   - ⚠️ `score` ist bei ~12 % der 5v5-Matches `null` (meist Mercy/Forfeit, teils auch FULL_TIME) – niemals als `0` behandeln.
+   - `metadata` nutzt `created_at` (snake_case, `{seconds}`); das Game.log nutzt `createdAt` (ISO-String).
    - 1v1 enthält `skill_rating` pro Seite; 5v5 nicht (null).
    - `userStats[]`: offizielle Aggregat-Stats (v. a. 1v1 Ranked) für Spieler in den geladenen Matches.
 3. **`https://playgoals.com/en/user-stats/<uuid>/x`** (HTML, Next.js) → eingebettetes `"stats":{skill_rating, rank, wins, losses, matches_played, expected_goals, play_time_seconds}` und `created_at`. Wird per Regex aus dem HTML gelesen (`fetchProfile`).
@@ -46,9 +49,11 @@ overlay/main.js (Electron): transparentes Fenster, startet server.js im selben P
 Was es **nicht** gibt: individuelle 5v5-Matchstats (Tore/Pässe pro Spieler). `playgoals.com/en/match-stat/<id>` hat Event-Daten nur für 1v1 (5v5 → 404). Replays (`Saved/Replays/*.replay`) sind proprietäres Binärformat.
 
 ## Kennzahlen
-- **Tracker Score 0–1000** (`trackerScore()` in `overlay.html`): bewertet den **Menschen**, nicht die Spielerkarte. Gewichte: SR 25 %, Winrate 25 %, Tordifferenz 15 %, xG/Match 15 %, Form L10 10 %, Erfahrung 5 %, Mercy-Bilanz 5 %. Kleine Stichproben werden Richtung Durchschnitt gezogen (Bayes-Shrinkage); < 10 Spiele = blass/„unsicher“.
-- **Party-Erkennung** (`detectParties()` in `server.js`): Spieler im selben Lobby-Team mit ≥ 3 gemeinsamen Matches in ihrer Historie.
-- **Siegchance**: Elo-Formel aus Ø-SR der Teams.
+- **Tracker Score 0–1000** (`trackerScore()` in `overlay.html`): bewertet den **Menschen**, nicht die Spielerkarte. Gewichte: SR 30 %, Winrate 30 %, Tordifferenz 18 %, Form L10 12 %, Erfahrung 5 %, Mercy-Bilanz 5 %. Kleine Stichproben werden Richtung Durchschnitt gezogen (Bayes-Shrinkage); < 10 Spiele = blass/„unsicher".
+- ⚠️ **Kein xG im Score.** `expected_goals` auf der Profilseite wird von GOALS nur für einen Teil der Matches erfasst (pro Spieler 13–68 % seiner Tore). `expected_goals / matches_played` streut dadurch 0,5–3,8 pro Match, obwohl alle Spieler 4–5,6 Team-Tore pro Spiel haben – als Kennzahl wertlos. Wird nicht mehr angezeigt (Spalte ist jetzt „Tore / Gegentore").
+- **Torbasierte Werte nur mit Ergebnis:** Mercy-/Forfeit-Matches liefern oft `score: null` (ca. 12 % der 5v5-Matches). Diese Matches zählen für Winrate/Form mit, aber **nicht** für Tore, Tordifferenz, „Zu Null". `scoredGames` = Stichprobe mit bekanntem Ergebnis; bei < 3 gewerteten Spielen ist die Tordifferenz im Score neutral.
+- **Party-Erkennung** (`detectParties()` in `server.js`): Spieler im selben Lobby-Team mit **≥ 4** gemeinsamen Matches **und** ≥ 20 % der Spiele des Spielers mit der kleineren Stichprobe. Beide Spielerdatensätze müssen geladen sein (sonst kein Urteil). 3 gemeinsame Matches waren im kleinen GOALS-Pool zu oft Zufall.
+- **Siegchance** (`winChance()` in `overlay.html`): Elo-Formel aus Ø-SR der Teams, vom Server an die eigenen Ranked-5v5-Ergebnisse angepasst (`winModel`), wenn das im Backtest besser war.
 - **Verkaufswert** = Stufe der unteren Potenzial-Grenze (<60: 100, 60: 250, 70: 650, 80: 3.000, 85: 25.000, 90: 250.000, 95: 2.000.000). **Upgrade-Kosten** nach OVR vor dem Upgrade (`upgradeCost()` in `manager.js`, im Spiel gemessen, ab 90 unbekannt). XP pro Schritt je Stufe: 0,5 / 1,5 / 2,5 / 4 / 5,5 / 7,5 Mio. `upgradeAdvice()` empfiehlt Upgrades, die den erwarteten Verkaufswert stärker erhöhen als sie kosten.
 
 ## Design-Regeln fürs Overlay (vom Nutzer so gewollt)
@@ -78,17 +83,34 @@ npm run server           # nur Server; Dashboard unter http://localhost:7777, Ov
 - `kader-manager.bat` → `launch.js --no-overlay`: nur Update + `node server.js` im Fenster + Kader-Manager im Browser (für 16:9-Bildschirme, auf denen das Overlay stört). `public/manager.html` zeigt dafür auch die Upgrade-Tipps und lädt alle 30 s neu.
 - Was auf dem verfolgten Branch landet, läuft beim Freund beim nächsten Start. Vorher `npm test` (node:test, keine Abhängigkeiten: `test/manager.test.js`, `test/server.e2e.test.js` auf Port 7798).
 
+## Gemeinsam entwickeln (Maxim + Leo)
+- Ein Repo: **maximilian-sh/goals-scout** (privat), Hauptbranch `main`. Beide haben Schreibrechte.
+- **Vor dem Arbeiten immer `git pull`** – der andere hat evtl. gepusht. Lokale, nicht committete Änderungen vorher committen oder `git stash` → `git pull` → `git stash pop`.
+- Kleine Sachen (Fix, Textänderung) direkt auf `main` committen und pushen. Größere Features auf einem Branch `feature/<name>` und per Pull Request mergen (Beispiel: PR #1 `feature/manager-scout`), damit der andere drüberschauen kann.
+- `main` muss immer laufen: Freunde mit Git-Klon (`overlay.bat`) bekommen jeden Push auf `main` beim nächsten Start. Vor dem Push `npm test`.
+- **CI:** `.github/workflows/test.yml` lässt `npm test` bei jedem Push auf `main` und bei jedem PR laufen (Windows-Runner). Roter Haken → erst fixen.
+- Merge-Konflikte entstehen fast immer in `public/overlay.html` und `server.js` (große Einzeldateien) – beide Seiten behalten, dann `npm test` und das Overlay kurz mit `?phase=lobby` anschauen.
+- Wer neue Erkenntnisse über Datenquellen, Kennzahlen oder Stolperfallen gewinnt, trägt sie hier in `CLAUDE.md` ein (gilt auch für Claude-Sessions).
+- Commit-Messages auf Deutsch, kurz, im Präsens („Overlay zeigt …“, „Party-Erkennung strenger“).
+
 ## Release (Auto-Update)
-- `npm run release` (oder `npm run release minor`) → bumpt Version, pusht Commit + Tag, baut NSIS-Installer (`--publish never`) und legt mit `gh release create` ein Release in **maximilian-sh/goals-scout** (privat) an. (electron-builders eigener Upload erzeugte doppelte Releases → nicht verwenden.)
-- Installierte Apps prüfen beim Start und alle 10 min, laden im Hintergrund und installieren **nie während eines laufenden Matches** (`installWhenIdle`).
-- Voraussetzungen auf dem Release-PC: `gh auth login` (Upload) und Datei `%USERPROFILE%\.goals-scout-token` mit einem **read-only** Fine-grained-Token (Contents: Read) für das Repo – wird als `overlay/update-token.json` in die App gepackt (gitignored). Ohne Token gibt es keine Updates.
-- Release nur von sauberem Working Tree (Skript bricht sonst ab).
+- **Ablauf:** auf `main`, alles committet und gepusht → `npm run release` (Patch) oder `npm run release minor`.
+  `scripts/release.js` prüft sauberen Working Tree, Branch `main` und Stand von `origin/main`, lässt `npm test` laufen, bumpt die Version (`npm version` → Commit „Release x.y.z“ + Tag `vx.y.z`) und pusht.
+- **Gebaut wird auf GitHub:** `.github/workflows/release.yml` startet bei jedem Tag `v*` (Windows-Runner): prüft Tag = `package.json`-Version, `npm ci`, `npm test`, packt das Secret `UPDATE_TOKEN` als `overlay/update-token.json` ein, baut den NSIS-Installer (`--publish never`) und legt mit `gh release create` das Release mit `.exe`, `.blockmap` und `latest.yml` an. Dauer ca. 5 min, Status unter Actions bzw. `gh run list`.
+- Also **nur Tag pushen = Release**. Keine Tags `v*` von Hand anlegen, die nicht von `npm version` kommen (Workflow bricht ab, wenn Tag und `package.json` nicht passen).
+- Schlägt der Build fehl: Fehler fixen, Tag löschen (`git push --delete origin vX.Y.Z`, `git tag -d vX.Y.Z`) und neu releasen – oder einfach die nächste Patch-Version releasen.
+- Notfall ohne Actions: `npm run release -- --local` baut lokal und lädt per `gh` hoch (braucht `gh auth login` und `%USERPROFILE%\.goals-scout-token`).
+- **Repo-Secret `UPDATE_TOKEN`:** **read-only** Fine-grained-Token (Contents: Read) für das Repo. Landet in jeder ausgelieferten App → nie ein Token mit Schreibrechten nehmen. Erneuern: neues Token erstellen, `gh secret set UPDATE_TOKEN` und neues Release – ältere installierte Apps behalten ihr altes Token (bis es abläuft, bekommen sie Updates).
+- electron-builders eigener Upload (`--publish always`) erzeugte doppelte Releases → nicht verwenden.
+- Installierte Apps prüfen beim Start und alle 10 min, laden im Hintergrund und installieren **nie während eines laufenden Matches** (`installWhenIdle`). Differenzielle Updates sind aus (Blockmaps privater Releases nicht lesbar).
+- Version steht nur in `package.json` – nicht von Hand ändern, das macht `npm version`.
 
 ## Konventionen & Stolperfallen
 - `server.js` bleibt **ohne npm-Abhängigkeiten** (nur Node-Builtins + globales `fetch`).
 - Overlay ist eine einzige HTML-Datei ohne Build-Schritt – so lassen.
 - Windows PowerShell 5.1 liest `.ps1` ohne BOM als ANSI → keine Umlaute in PowerShell-Skripten.
 - Beim Testen mit Headless-Edge **nie alle `msedge.exe` beenden** (schließt den Browser des Nutzers) – eigenes `--user-data-dir` nutzen.
+- `body.ov .row { border: … }` hat höhere Spezifität als `.row[data-party="A"]` – Party-Farben müssen im `body.ov`-Block erneut gesetzt werden, sonst sind sie im Overlay unsichtbar (nur im Browser-Dashboard).
 - Headless-Edge hat eine Mindestbreite (~500 px): schmale Layouts in einem `<iframe width=420>` testen.
 - Daten (`data/`) sind lokal und gitignored – keine Nutzerdaten committen.
 

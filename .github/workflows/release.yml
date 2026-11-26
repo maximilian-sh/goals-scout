@@ -1,0 +1,63 @@
+# Baut bei jedem Versions-Tag (v1.2.3) den Windows-Installer und legt das GitHub-Release an.
+# Installierte Apps holen sich das Release danach automatisch (electron-updater).
+# Ausgelöst durch `npm run release` (bumpt Version, pusht Commit + Tag).
+#
+# Benötigtes Repo-Secret: UPDATE_TOKEN = read-only Fine-grained-Token (Contents: Read)
+# für maximilian-sh/goals-scout. Wird als overlay/update-token.json in die App gepackt.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Tag passt zur package.json
+        shell: bash
+        run: |
+          v=$(node -p "require('./package.json').version")
+          if [ "v$v" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME passt nicht zu package.json ($v)"; exit 1
+          fi
+
+      - run: npm ci
+
+      - run: npm test
+
+      - name: Update-Token einpacken
+        shell: bash
+        env:
+          UPDATE_TOKEN: ${{ secrets.UPDATE_TOKEN }}
+        run: |
+          if [ -z "$UPDATE_TOKEN" ]; then echo "Secret UPDATE_TOKEN fehlt"; exit 1; fi
+          node -e "require('fs').writeFileSync('overlay/update-token.json', JSON.stringify({ token: process.env.UPDATE_TOKEN.trim() }))"
+
+      # Ohne electron-builders eigenen Upload (erzeugte doppelte Releases), stattdessen gh.
+      - name: Installer bauen
+        run: npx electron-builder --win --publish never
+
+      - name: Release anlegen
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          exe="dist/GOALS-Scout-Setup-$v.exe"
+          gh release create "$GITHUB_REF_NAME" "$exe" "$exe.blockmap" dist/latest.yml \
+            --title "$GITHUB_REF_NAME" --generate-notes
